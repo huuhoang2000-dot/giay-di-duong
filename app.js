@@ -2,7 +2,7 @@
    Toàn bộ dữ liệu lưu trong IndexedDB trên chính điện thoại, không gửi đi đâu. */
 'use strict';
 (function () {
-  const APP_VERSION = '1.2.0';
+  const APP_VERSION = '1.2.1';
   const DAY = 86400000;
   const VN_OFFSET = 7 * 3600000; // Việt Nam: UTC+7, không đổi giờ mùa hè
   const RENEW_DAYS = 90;
@@ -102,7 +102,7 @@
         // Nhãn có thể nằm cuối dòng trên ("Có giá trị đến:" ↵ "12/12/2026")
         const before = n.slice(Math.max(0, idx - 40), idx);
         const ctx = (n.slice(0, idx).trim().length < 3 && i > 0 ? normKeep(lines[i - 1]).slice(-30) + ' ' : '') + before;
-        if (/sinh/.test(ctx)) return; // bỏ ngày sinh
+        if (/sinh|cccd|cmnd|can cuoc|dinh danh|qlhc|ttxh/.test(ctx)) return; // bỏ ngày sinh, ngày cấp CCCD
         out.push({ iso, ctx });
       };
       let m;
@@ -126,8 +126,13 @@
       if (isos.length === 1) return isos[0] > today ? { expiry: isos[0] } : { issue: isos[0] };
       expiry = isos[isos.length - 1];
     }
-    const start = dates.find((d) => isStartCtx(d.ctx) && d.iso < expiry);
-    const issue = start ? start.iso : (isos[0] < expiry ? isos[0] : '');
+    // Giấy đi đường vài tháng, bảo hiểm 1 năm → ngày cấp phải trong ~13 tháng trước hạn
+    // (giấy còn có ngày đăng ký xe… từ nhiều năm trước)
+    const minIssue = addDays(expiry, -400);
+    const start = dates.find((d) => isStartCtx(d.ctx) && d.iso < expiry && d.iso >= minIssue);
+    // Không có nhãn: lấy ngày gần hạn nhất
+    const before = isos.filter((iso) => iso < expiry && iso >= minIssue);
+    const issue = start ? start.iso : (before.length ? before[before.length - 1] : '');
     return { issue, expiry };
   }
 
@@ -147,17 +152,26 @@
     return best ? best.plate : '';
   }
 
-  const NAME_KEYS = ['nguoi duoc bao hiem', 'ten chu xe', 'chu xe', 'ho va ten', 'ho ten', 'ten khach hang', 'khach hang', 'nguoi mua bao hiem', 'ben mua bao hiem'];
+  // "...giấy chứng nhận đăng ký xe ô tô của ↵ TRƯƠNG ĐÌNH KHÁNH" (biên nhận thế chấp của ngân hàng) đứng đầu vì chữ in to, rõ
+  const NAME_KEYS = ['dang ky xe o to cua', 'dang ky xe may cua', 'dang ky xe cua', 'nguoi duoc bao hiem', 'ten chu xe', 'chu xe',
+    'ho va ten', 'ho ten', 'ten khach hang', 'khach hang', 'nguoi mua bao hiem', 'ben mua bao hiem'];
+  function nameFrom(text) {
+    let s = text.replace(/\([^)]*\)?/g, ' ').replace(/^[\s:.\-–]+/, ''); // bỏ "(Owner's full name):"
+    const cut = normKeep(s).search(/dia chi|nam sinh|ngay sinh|sdt|dien thoai|cccd|cmnd|[0-9,;]/);
+    if (cut >= 0) s = s.slice(0, cut);
+    s = s.replace(/[\s:.\-–]+$/, '').replace(/\s+/g, ' ');
+    return /^[\p{L} ]{4,50}$/u.test(s) && s.split(' ').length >= 2 ? titleCaseVN(s) : '';
+  }
   function findName(lines) {
     for (const key of NAME_KEYS) {
-      for (const line of lines) {
-        const idx = normKeep(line).indexOf(key);
+      for (let i = 0; i < lines.length; i++) {
+        const idx = normKeep(lines[i]).indexOf(key);
         if (idx < 0) continue;
-        let rest = line.slice(idx + key.length).replace(/^[\s:.\-–]+/, '');
-        const cut = normKeep(rest).search(/dia chi|nam sinh|ngay sinh|sdt|dien thoai|cccd|cmnd|[0-9(,;]/);
-        if (cut >= 0) rest = rest.slice(0, cut);
-        rest = rest.replace(/[\s:.\-–]+$/, '').replace(/\s+/g, ' ');
-        if (/^[\p{L} ]{4,50}$/u.test(rest) && rest.split(' ').length >= 2) return titleCaseVN(rest);
+        const rest = lines[i].slice(idx + key.length);
+        // Tên cùng dòng với nhãn, hoặc nằm ở dòng ngay dưới
+        const restEmpty = !rest.replace(/\([^)]*\)?/g, '').replace(/[\s:.\-–]+/g, '');
+        const name = nameFrom(rest) || (restEmpty && i + 1 < lines.length ? nameFrom(lines[i + 1]) : '');
+        if (name) return name;
       }
     }
     return '';
@@ -865,17 +879,25 @@
     btn.disabled = true;
     const first = !ocrWorkerP;
     ocrStatus(key, first ? 'Đang tải bộ đọc chữ (chỉ lần đầu, khoảng 5 MB)…' : 'Đang đọc chữ…');
+    let pass = 1;
     ocrProgress = (m) => {
       const pct = m.progress ? ` ${Math.round(m.progress * 100)}%` : '';
-      if (m.status === 'recognizing text') ocrStatus(key, 'Đang đọc chữ…' + pct);
+      if (m.status === 'recognizing text') ocrStatus(key, `Đang đọc chữ (lượt ${pass}/2)…` + pct);
       else if (/loading|initializ/.test(m.status) && first) ocrStatus(key, 'Đang tải bộ đọc chữ (chỉ lần đầu, khoảng 5 MB)…' + pct);
     };
     try {
       const [worker, canvas] = await Promise.all([getOcrWorker(), imageToCanvas(file)]);
-      const { data } = await worker.recognize(canvas);
-      const parsed = parseDoc(data.text, state.today);
+      // Đọc 2 lượt rồi gộp: PSM 4 tách đúng cột (giấy biên nhận + bản sao cà vẹt nằm cạnh nhau),
+      // PSM 6 đọc được cả dòng bị chữ ký/con dấu đè (vd "Ngày 13 tháng 10 năm 2026")
+      await worker.setParameters({ tessedit_pageseg_mode: '4' });
+      const a = await worker.recognize(canvas);
+      pass = 2;
+      await worker.setParameters({ tessedit_pageseg_mode: '6' });
+      const b = await worker.recognize(canvas);
+      const text = a.data.text + '\n' + b.data.text;
+      const parsed = parseDoc(text, state.today);
       const types = Object.keys(OCR_TARGETS[key]);
-      ocrState[key] = { parsed, text: data.text, type: types.includes(parsed.type) ? parsed.type : types[0] };
+      ocrState[key] = { parsed, text: a.data.text.trim() + '\n\n— lượt 2 —\n' + b.data.text.trim(), type: types.includes(parsed.type) ? parsed.type : types[0] };
       ocrStatus(key, '');
       renderOcrResult(key);
     } catch (e) {

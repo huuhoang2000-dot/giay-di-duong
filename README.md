@@ -17,7 +17,7 @@ App cá nhân (PWA) theo dõi hạn giấy đi đường và hạn bảo hiểm 
 ## Cập nhật app sau này
 
 1. Sửa code.
-2. Mở `sw.js`, tăng số phiên bản (hiện là `giay-di-duong-v3` → lần sau đổi thành `giay-di-duong-v4`). Không cần đổi `giay-di-duong-ocr-v1` trừ khi thay file trong `ocr/`.
+2. Mở `sw.js`, tăng số phiên bản (hiện là `giay-di-duong-v4` → lần sau đổi thành `giay-di-duong-v5`). Không cần đổi `giay-di-duong-ocr-v1` trừ khi thay file trong `ocr/`.
 3. Tải các file đã sửa lên GitHub (Add file → Upload files → Commit changes).
 4. Mở app trên iPhone; khi thấy thông báo "Đã có bản cập nhật mới" thì bấm **Tải lại**.
 
