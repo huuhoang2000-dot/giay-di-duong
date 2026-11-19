@@ -33,16 +33,35 @@
 </header>
 
 <main class="wrap">
-  <section class="stats" aria-label="Thống kê theo nhóm">
-    <button class="stat stat-over" data-filter="over" aria-pressed="false">
-      <span class="stat-num" id="n-over">0</span><span class="stat-label">Quá hạn</span>
-    </button>
-    <button class="stat stat-soon" data-filter="soon" aria-pressed="false">
-      <span class="stat-num" id="n-soon">0</span><span class="stat-label">Còn ≤ 7 ngày</span>
-    </button>
-    <button class="stat stat-month" data-filter="month" aria-pressed="false">
-      <span class="stat-num" id="n-month">0</span><span class="stat-label">Còn 8–30 ngày</span>
-    </button>
+  <section class="stats" aria-label="Tóm tắt hạn sắp đến">
+    <div class="stat-row">
+      <div class="stat-row-label">Giấy đi đường</div>
+      <div class="stat-grid">
+        <button class="stat stat-over" data-kind="paper" data-filter="over" aria-pressed="false">
+          <span class="stat-num" id="n-paper-over">0</span><span class="stat-label">Quá hạn</span>
+        </button>
+        <button class="stat stat-soon" data-kind="paper" data-filter="soon" aria-pressed="false">
+          <span class="stat-num" id="n-paper-soon">0</span><span class="stat-label">Còn ≤ 7 ngày</span>
+        </button>
+        <button class="stat stat-month" data-kind="paper" data-filter="month" aria-pressed="false">
+          <span class="stat-num" id="n-paper-month">0</span><span class="stat-label">Còn 8–30 ngày</span>
+        </button>
+      </div>
+    </div>
+    <div class="stat-row">
+      <div class="stat-row-label">Bảo hiểm vật chất xe <span id="n-ins-total"></span></div>
+      <div class="stat-grid">
+        <button class="stat stat-over" data-kind="ins" data-filter="over" aria-pressed="false">
+          <span class="stat-num" id="n-ins-over">0</span><span class="stat-label">Quá hạn</span>
+        </button>
+        <button class="stat stat-soon" data-kind="ins" data-filter="soon" aria-pressed="false">
+          <span class="stat-num" id="n-ins-soon">0</span><span class="stat-label">Còn ≤ 7 ngày</span>
+        </button>
+        <button class="stat stat-month" data-kind="ins" data-filter="month" aria-pressed="false">
+          <span class="stat-num" id="n-ins-month">0</span><span class="stat-label">Còn 8–30 ngày</span>
+        </button>
+      </div>
+    </div>
   </section>
 
   <div id="install-tip" class="banner tip" hidden>
@@ -67,7 +86,12 @@
   <div class="search-wrap">
     <div class="search">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-      <input id="q" type="search" placeholder="Tìm theo tên hoặc biển số" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Tìm kiếm">
+      <input id="q" type="search" placeholder="Tìm tên, biển số, số HĐ BH" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Tìm kiếm">
+    </div>
+    <div class="seg" role="group" aria-label="Xem theo loại hạn">
+      <button type="button" data-kind="all" aria-pressed="true">Tất cả</button>
+      <button type="button" data-kind="paper" aria-pressed="false">Giấy đi đường</button>
+      <button type="button" data-kind="ins" aria-pressed="false">Bảo hiểm</button>
     </div>
   </div>
 
@@ -134,13 +158,43 @@
       <div class="chips">
         <button type="button" class="chip" id="chip-form-90">Hạn = ngày cấp + 90 ngày</button>
       </div>
+      <div class="form-section">
+        <h3>Bảo hiểm vật chất xe <span class="sec-sub">(ngân hàng thụ hưởng)</span></h3>
+        <div class="field">
+          <label for="f-ins-company">Công ty bảo hiểm</label>
+          <input id="f-ins-company" type="text" list="ins-companies" autocapitalize="words" autocorrect="off" enterkeyhint="next" placeholder="VD: Bảo Việt, PVI, PTI…">
+          <small class="err" data-err="f-ins-company"></small>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label for="f-ins-number">Số HĐ bảo hiểm</label>
+            <input id="f-ins-number" type="text" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="Không bắt buộc">
+          </div>
+          <div class="field">
+            <label for="f-ins-expiry">Hết hạn bảo hiểm</label>
+            <div class="date-field">
+              <input id="f-ins-expiry" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10">
+              <span class="date-pick" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                <input type="date" tabindex="-1" aria-label="Chọn ngày hết hạn bảo hiểm">
+              </span>
+            </div>
+            <small class="err" data-err="f-ins-expiry"></small>
+          </div>
+        </div>
+        <p class="hint">Bỏ trống cả phần này nếu chưa có thông tin bảo hiểm.</p>
+      </div>
       <div class="field">
         <label for="f-note">Ghi chú</label>
         <textarea id="f-note" rows="3" placeholder="SĐT, số hợp đồng, đại lý…"></textarea>
       </div>
       <div id="form-history" class="history" hidden>
-        <h3>Lịch sử gia hạn</h3>
+        <h3>Lịch sử gia hạn giấy đi đường</h3>
         <ol id="history-list"></ol>
+      </div>
+      <div id="form-ins-history" class="history" hidden>
+        <h3>Lịch sử gia hạn bảo hiểm</h3>
+        <ol id="ins-history-list"></ol>
       </div>
       <button type="button" id="btn-delete" class="btn btn-danger-ghost wide" hidden>Xóa khách này</button>
     </div>
@@ -197,6 +251,54 @@
   </form>
 </section>
 
+<!-- Gia hạn bảo hiểm -->
+<section id="sheet-ins" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="ins-title">
+  <form id="ins-form" novalidate autocomplete="off">
+    <div class="sheet-head">
+      <button type="button" class="head-btn" data-close>Hủy</button>
+      <h2 id="ins-title">Đã gia hạn bảo hiểm</h2>
+      <button type="submit" class="head-btn strong">Lưu</button>
+    </div>
+    <div class="sheet-body">
+      <div class="who-box">
+        <div class="who-name" id="i-name"></div>
+        <div class="who-sub" id="i-sub"></div>
+      </div>
+      <div class="field">
+        <label for="i-expiry">Hạn bảo hiểm mới <em>*</em></label>
+        <div class="date-field">
+          <input id="i-expiry" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10">
+          <span class="date-pick" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <input type="date" tabindex="-1" aria-label="Chọn hạn bảo hiểm mới">
+          </span>
+        </div>
+        <small class="err" data-err="i-expiry"></small>
+      </div>
+      <p class="hint">Gợi ý sẵn: hạn cũ + 1 năm. Có thể sửa lại.</p>
+      <div class="chips">
+        <button type="button" class="chip" id="chip-i-old">+1 năm từ hạn cũ</button>
+        <button type="button" class="chip" id="chip-i-today">+1 năm từ hôm nay</button>
+      </div>
+      <div class="field">
+        <label for="i-company">Công ty bảo hiểm <em>*</em></label>
+        <input id="i-company" type="text" list="ins-companies" autocapitalize="words" autocorrect="off">
+        <small class="err" data-err="i-company"></small>
+      </div>
+      <div class="field">
+        <label for="i-number">Số HĐ bảo hiểm mới (không bắt buộc)</label>
+        <input id="i-number" type="text" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="i-note">Ghi chú lần gia hạn (không bắt buộc)</label>
+        <input id="i-note" type="text" placeholder="VD: đã nhận bản sao HĐ bảo hiểm mới">
+      </div>
+    </div>
+  </form>
+</section>
+
+<datalist id="ins-companies"></datalist>
+
 <!-- Thêm vào Lịch -->
 <section id="sheet-cal" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="cal-title">
   <div class="sheet-head">
@@ -209,12 +311,24 @@
       <div class="who-name" id="cal-name"></div>
       <div class="who-sub" id="cal-sub"></div>
     </div>
-    <ul class="cal-facts">
-      <li>Sự kiện cả ngày vào <b id="cal-date"></b></li>
-      <li>Nhắc lúc 8:00 sáng: <b>trước 7 ngày</b> và <b>trước 1 ngày</b></li>
-    </ul>
-    <button type="button" id="cal-download" class="btn btn-primary wide">Tạo sự kiện Lịch (.ics)</button>
-    <button type="button" id="cal-share" class="btn btn-ghost wide" hidden>Chia sẻ / Lưu file .ics</button>
+    <div class="cal-block" id="cal-paper">
+      <h3>Giấy đi đường</h3>
+      <ul class="cal-facts">
+        <li>Sự kiện cả ngày vào <b id="cal-date"></b></li>
+        <li>Nhắc lúc 8:00 sáng: <b>trước 7 ngày</b> và <b>trước 1 ngày</b></li>
+      </ul>
+      <button type="button" class="btn btn-primary wide" data-cal="paper">Tạo sự kiện Lịch (.ics)</button>
+      <button type="button" class="btn btn-ghost wide cal-share" data-cal-share="paper" hidden>Chia sẻ / Lưu file .ics</button>
+    </div>
+    <div class="cal-block" id="cal-ins">
+      <h3>Bảo hiểm vật chất xe</h3>
+      <ul class="cal-facts">
+        <li>Sự kiện cả ngày vào <b id="cal-ins-date"></b></li>
+        <li>Nhắc lúc 8:00 sáng: <b>trước 30 ngày</b>, <b>trước 7 ngày</b> và <b>trước 1 ngày</b></li>
+      </ul>
+      <button type="button" class="btn btn-primary wide" data-cal="ins">Tạo sự kiện Lịch bảo hiểm (.ics)</button>
+      <button type="button" class="btn btn-ghost wide cal-share" data-cal-share="ins" hidden>Chia sẻ / Lưu file .ics</button>
+    </div>
     <div class="howto">
       <b>Trên iPhone:</b>
       <ol>
@@ -222,7 +336,7 @@
         <li>Bấm <b>Thêm vào Lịch</b> / <b>Thêm tất cả</b>.</li>
         <li>Nếu file vào mục Tải về: mở app <b>Tệp → Tải về</b>, bấm vào file .ics rồi thêm vào Lịch.</li>
       </ol>
-      <p class="hint">Lưu ý: sự kiện chứa tên và biển số khách. Nếu Lịch đồng bộ iCloud, sự kiện sẽ nằm trên iCloud của bạn.</p>
+      <p class="hint">Lưu ý: sự kiện chứa tên, biển số khách (và thông tin bảo hiểm nếu có). Nếu Lịch đồng bộ iCloud, sự kiện sẽ nằm trên iCloud của bạn.</p>
     </div>
   </div>
 </section>

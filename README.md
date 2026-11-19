@@ -1,6 +1,6 @@
 # Giấy đi đường
 
-App cá nhân (PWA) theo dõi hạn giấy đi đường của khách vay mua xe. Cài lên màn hình chính iPhone, chạy được khi không có mạng. Dữ liệu chỉ lưu trên điện thoại (IndexedDB), không gửi đi đâu.
+App cá nhân (PWA) theo dõi hạn giấy đi đường và hạn bảo hiểm vật chất xe (ngân hàng thụ hưởng) của khách vay mua xe. Cài lên màn hình chính iPhone, chạy được khi không có mạng. Dữ liệu chỉ lưu trên điện thoại (IndexedDB), không gửi đi đâu.
 
 ## Các file trong thư mục
 
@@ -16,7 +16,7 @@ App cá nhân (PWA) theo dõi hạn giấy đi đường của khách vay mua xe
 ## Cập nhật app sau này
 
 1. Sửa code.
-2. Mở `sw.js`, tăng số phiên bản: `giay-di-duong-v1` → `giay-di-duong-v2`.
+2. Mở `sw.js`, tăng số phiên bản (hiện là `giay-di-duong-v2` → lần sau đổi thành `giay-di-duong-v3`).
 3. Tải các file đã sửa lên GitHub (Add file → Upload files → Commit changes).
 4. Mở app trên iPhone; khi thấy thông báo "Đã có bản cập nhật mới" thì bấm **Tải lại**.
 

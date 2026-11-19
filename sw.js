@@ -1,6 +1,6 @@
 /* Service worker: lưu sẵn các file của app để chạy khi không có mạng.
    Mỗi lần sửa code, hãy tăng số phiên bản bên dưới (v1 -> v2 ...) để iPhone tải bản mới. */
-const CACHE = 'giay-di-duong-v1';
+const CACHE = 'giay-di-duong-v2';
 const ASSETS = [
   './',
   './index.html',

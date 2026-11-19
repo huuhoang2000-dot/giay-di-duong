@@ -2,10 +2,12 @@
    Toàn bộ dữ liệu lưu trong IndexedDB trên chính điện thoại, không gửi đi đâu. */
 'use strict';
 (function () {
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
   const DAY = 86400000;
   const VN_OFFSET = 7 * 3600000; // Việt Nam: UTC+7, không đổi giờ mùa hè
   const RENEW_DAYS = 90;
+  const INS_RENEW_YEARS = 1;
+  const COMMON_INSURERS = ['Bảo Việt', 'PVI', 'PTI', 'Bảo Minh', 'MIC', 'BIC', 'VBI', 'PJICO', 'BSH'];
   const BACKUP_EVERY_DAYS = 7;
 
   /* ---------- Tiện ích ---------- */
@@ -25,6 +27,12 @@
   function msToISO(ms) { return new Date(ms).toISOString().slice(0, 10); }
   function addDays(iso, n) { return msToISO(isoToMs(iso) + n * DAY); }
   function diffDays(fromISO, toISO) { return Math.round((isoToMs(toISO) - isoToMs(fromISO)) / DAY); }
+  /** Cộng năm, giữ ngày/tháng; 29/02 sang năm không nhuận thành 28/02. */
+  function addYears(iso, n) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const last = new Date(Date.UTC(y + n, m, 0)).getUTCDate();
+    return `${y + n}-${pad(m)}-${pad(Math.min(d, last))}`;
+  }
   function fmtDate(iso) { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; }
   function isValidISO(iso) {
     if (typeof iso !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
@@ -46,8 +54,8 @@
   }
 
   /** Trạng thái theo số ngày còn lại: over (đỏ), soon (cam), month (vàng), ok. */
-  function statusOf(c, today) {
-    const d = diffDays(today, c.expiry);
+  function statusOfDate(iso, today) {
+    const d = diffDays(today, iso);
     if (d < 0) return { key: 'over', days: d, text: `Quá hạn ${-d} ngày` };
     if (d === 0) return { key: 'soon', days: 0, text: 'Hết hạn hôm nay' };
     if (d === 1) return { key: 'soon', days: 1, text: 'Mai hết hạn' };
@@ -55,7 +63,12 @@
     if (d <= 30) return { key: 'month', days: d, text: `Còn ${d} ngày` };
     return { key: 'ok', days: d, text: `Còn ${d} ngày` };
   }
+  const statusOf = (c, today) => statusOfDate(c.expiry, today);
+  /** Hạn bảo hiểm; null nếu khách chưa nhập (khách cũ). */
+  const insStatusOf = (c, today) => (c.insExpiry ? statusOfDate(c.insExpiry, today) : null);
+  const RANK = { ok: 0, month: 1, soon: 2, over: 3 };
   const FILTER_NAMES = { over: 'Quá hạn', soon: 'Còn ≤ 7 ngày', month: 'Còn 8–30 ngày' };
+  const KIND_NAMES = { paper: 'Giấy đi đường', ins: 'Bảo hiểm' };
 
   /* ---------- Tìm kiếm không dấu ---------- */
   function norm(s) {
@@ -65,9 +78,9 @@
   function matches(c, q) {
     const nq = norm(q);
     if (!nq) return true;
-    if (norm(c.name).includes(nq)) return true;
+    if (norm(c.name).includes(nq) || norm(c.insCompany).includes(nq)) return true;
     const pq = plateKey(q);
-    return pq.length > 0 && plateKey(c.plate).includes(pq);
+    return pq.length > 0 && (plateKey(c.plate).includes(pq) || plateKey(c.insNumber).includes(pq));
   }
 
   /* ---------- Cơ sở dữ liệu trên máy (IndexedDB) ---------- */
@@ -121,7 +134,8 @@
   /* ---------- Trạng thái app ---------- */
   const state = {
     customers: [],
-    filter: null,       // 'over' | 'soon' | 'month' | null
+    kind: 'all',        // 'all' | 'paper' (giấy đi đường) | 'ins' (bảo hiểm)
+    filter: null,       // 'over' | 'soon' | 'month' | null — áp dụng cho loại hạn đang xem
     query: '',
     today: todayISO(),
     lastBackupAt: null, // chuỗi ISO thời điểm sao lưu gần nhất
@@ -136,32 +150,40 @@
     const today = state.today;
     $('#today-label').textContent = 'Hôm nay: ' + fmtDate(today);
 
-    const rows = state.customers.map((c) => ({ c, s: statusOf(c, today) }));
-    rows.sort((a, b) => (a.c.expiry < b.c.expiry ? -1 : a.c.expiry > b.c.expiry ? 1 : a.c.name.localeCompare(b.c.name, 'vi')));
+    const kind = state.kind;
+    const rows = state.customers.map((c) => ({ c, s: statusOf(c, today), si: insStatusOf(c, today) }));
 
-    const counts = { over: 0, soon: 0, month: 0, ok: 0 };
-    rows.forEach((r) => { counts[r.s.key]++; });
-    $('#n-over').textContent = counts.over;
-    $('#n-soon').textContent = counts.soon;
-    $('#n-month').textContent = counts.month;
-    $$('.stat').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter)));
+    const counts = { paper: { over: 0, soon: 0, month: 0, ok: 0 }, ins: { over: 0, soon: 0, month: 0, ok: 0 } };
+    let insTotal = 0;
+    rows.forEach((r) => { counts.paper[r.s.key]++; if (r.si) { counts.ins[r.si.key]++; insTotal++; } });
+    ['paper', 'ins'].forEach((k) => ['over', 'soon', 'month'].forEach((f) => { $(`#n-${k}-${f}`).textContent = counts[k][f]; }));
+    $('#n-ins-total').textContent = insTotal < rows.length ? `· ${insTotal}/${rows.length} khách đã nhập` : '';
+    $$('.stat').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === kind && b.dataset.filter === state.filter)));
+    $$('.seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === kind)));
 
+    // Ngày dùng để sắp xếp: theo loại đang xem; "Tất cả" thì lấy hạn nào đến trước
+    const dateOf = (r) => (kind === 'paper' ? r.c.expiry : kind === 'ins' ? r.c.insExpiry
+      : (r.c.insExpiry && r.c.insExpiry < r.c.expiry ? r.c.insExpiry : r.c.expiry));
     let shown = rows;
-    if (state.filter) shown = shown.filter((r) => r.s.key === state.filter);
+    if (kind === 'ins') shown = shown.filter((r) => r.si);
+    if (state.filter) shown = shown.filter((r) => (kind === 'ins' ? r.si : r.s).key === state.filter);
     if (state.query) shown = shown.filter((r) => matches(r.c, state.query));
+    shown.sort((a, b) => { const da = dateOf(a), db = dateOf(b); return da < db ? -1 : da > db ? 1 : a.c.name.localeCompare(b.c.name, 'vi'); });
 
     const total = rows.length;
+    const filtering = kind !== 'all' || state.filter || state.query;
     let info;
-    if (state.filter || state.query) {
+    if (filtering) {
       const parts = [];
+      if (kind !== 'all') parts.push(KIND_NAMES[kind]);
       if (state.filter) parts.push(FILTER_NAMES[state.filter]);
       if (state.query) parts.push(`“${state.query}”`);
-      info = `Đang lọc: ${parts.join(' · ')} — ${shown.length}/${total} khách`;
+      info = `Đang xem: ${parts.join(' · ')} — ${shown.length}/${total} khách`;
     } else {
       info = total ? `${total} khách · hạn gần nhất ở trên` : '';
     }
     $('#list-info').textContent = info;
-    $('#btn-clear-filter').hidden = !(state.filter || state.query);
+    $('#btn-clear-filter').hidden = !filtering;
 
     $('#list').innerHTML = shown.map(cardHTML).join('');
 
@@ -172,6 +194,9 @@
     } else if (state.ready && total === 0) {
       empty.hidden = false;
       empty.innerHTML = '<h3>Chưa có khách nào</h3><p>Bấm nút + để thêm khách đầu tiên.</p><button class="btn btn-primary" data-act="add-first">Thêm khách</button>';
+    } else if (total > 0 && shown.length === 0 && kind === 'ins' && insTotal === 0 && !state.query) {
+      empty.hidden = false;
+      empty.innerHTML = '<h3>Chưa có khách nào nhập bảo hiểm</h3><p>Bấm vào tên khách để thêm công ty và ngày hết hạn bảo hiểm.</p>';
     } else if (total > 0 && shown.length === 0) {
       empty.hidden = false;
       empty.innerHTML = '<h3>Không có khách phù hợp</h3><p>Thử bỏ lọc hoặc tìm từ khác.</p>';
@@ -182,29 +207,58 @@
     renderBanners();
   }
 
-  function cardHTML({ c, s }) {
+  const ICON_CHECK = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const ICON_CAL = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
+  function cardHTML({ c, s, si }) {
+    const kind = state.kind;
+    // Màu cả thẻ: theo loại hạn đang xem; "Tất cả" thì lấy hạn gấp hơn
+    const main = kind === 'paper' ? s : kind === 'ins' ? si : (si && RANK[si.key] > RANK[s.key] ? si : s);
     const renewals = (c.history || []).length;
-    return `<li class="card st-${s.key}" data-id="${esc(c.id)}">
+    const insRenewals = (c.insHistory || []).length;
+    const counts = [renewals && `giấy ${renewals} lần`, insRenewals && `BH ${insRenewals} lần`].filter(Boolean);
+
+    const paperRow = `<div class="due st-${s.key}">
+        <div class="due-info"><span class="due-label">Giấy đi đường</span>
+          <span class="due-date">Hết hạn <b>${fmtDate(c.expiry)}</b>${c.issue ? ` · cấp ${fmtDate(c.issue)}` : ''}</span></div>
+        <span class="pill">${esc(s.text)}</span>
+      </div>`;
+    let insRow = '';
+    if (si) {
+      insRow = `<div class="due st-${si.key}">
+        <div class="due-info"><span class="due-label">Bảo hiểm${c.insCompany ? ' · ' + esc(c.insCompany) : ''}</span>
+          <span class="due-date">Hết hạn <b>${fmtDate(c.insExpiry)}</b>${c.insNumber ? ` · HĐ ${esc(c.insNumber)}` : ''}</span></div>
+        <span class="pill">${esc(si.text)}</span>
+      </div>`;
+    } else if (kind === 'all') {
+      insRow = '<div class="due due-none"><span class="due-label">Bảo hiểm: chưa nhập</span></div>';
+    }
+    const rowsHTML = kind === 'ins' ? insRow + paperRow : paperRow + insRow;
+
+    let actions;
+    if (kind === 'all' && si) {
+      actions = `<div class="card-actions three">
+        <button class="btn btn-primary" type="button" data-act="renew">Gia hạn giấy</button>
+        <button class="btn btn-primary" type="button" data-act="renew-ins">Gia hạn BH</button>
+        <button class="btn btn-ghost cal-btn" type="button" data-act="cal" aria-label="Thêm vào Lịch">${ICON_CAL}Lịch</button>
+      </div>`;
+    } else {
+      const renewBtn = kind === 'ins'
+        ? `<button class="btn btn-primary" type="button" data-act="renew-ins">${ICON_CHECK}Đã gia hạn BH</button>`
+        : `<button class="btn btn-primary" type="button" data-act="renew">${ICON_CHECK}Đã gia hạn giấy</button>`;
+      actions = `<div class="card-actions">${renewBtn}
+        <button class="btn btn-ghost" type="button" data-act="cal">${ICON_CAL}Thêm vào Lịch</button>
+      </div>`;
+    }
+
+    return `<li class="card tone-${main.key}" data-id="${esc(c.id)}">
       <button class="card-main" type="button" data-act="edit" aria-label="Sửa thông tin ${esc(c.name)}">
-        <div class="card-top"><span class="name">${esc(c.name)}</span><span class="badge">${esc(s.text)}</span></div>
-        <div class="card-meta">
-          ${c.plate ? `<span class="plate">${esc(c.plate)}</span>` : ''}
-          <span>Hết hạn <b>${fmtDate(c.expiry)}</b></span>
-          ${c.issue ? `<span>Cấp ${fmtDate(c.issue)}</span>` : ''}
-          ${renewals ? `<span class="renew-count">Đã gia hạn ${renewals} lần</span>` : ''}
-        </div>
+        <div class="card-top"><span class="name">${esc(c.name)}</span>${c.plate ? `<span class="plate">${esc(c.plate)}</span>` : ''}</div>
+        <div class="dues">${rowsHTML}</div>
+        ${counts.length ? `<div class="renew-count">Đã gia hạn: ${counts.join(', ')}</div>` : ''}
         ${c.note ? `<div class="note">${esc(c.note)}</div>` : ''}
       </button>
-      <div class="card-actions">
-        <button class="btn btn-primary" type="button" data-act="renew">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Đã gia hạn
-        </button>
-        <button class="btn btn-ghost" type="button" data-act="cal">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          Thêm vào Lịch
-        </button>
-      </div>
+      ${actions}
     </li>`;
   }
 
@@ -367,7 +421,11 @@
     setDate('f-issue', c ? c.issue : '');
     setDate('f-expiry', c ? c.expiry : '');
     $('#f-note').value = c ? (c.note || '') : '';
+    $('#f-ins-company').value = c ? (c.insCompany || '') : '';
+    $('#f-ins-number').value = c ? (c.insNumber || '') : '';
+    setDate('f-ins-expiry', c ? c.insExpiry : '');
     $('#btn-delete').hidden = !c;
+    fillInsurerList();
 
     const hist = (c && c.history) || [];
     $('#form-history').hidden = hist.length === 0;
@@ -376,7 +434,27 @@
         ${h.newIssue ? `<div class="h-note">Cấp mới ${fmtDate(h.newIssue)}</div>` : ''}
         ${h.note ? `<div class="h-note">${esc(h.note)}</div>` : ''}
       </li>`).join('');
+    const insHist = (c && c.insHistory) || [];
+    $('#form-ins-history').hidden = insHist.length === 0;
+    $('#ins-history-list').innerHTML = insHist.slice().reverse().map((h) => `<li>
+        Ngày ${fmtDate(h.renewedOn)}: hạn ${h.oldExpiry ? fmtDate(h.oldExpiry) : '?'} → <b>${fmtDate(h.newExpiry)}</b>
+        ${h.newCompany ? `<div class="h-note">${esc(h.newCompany)}${h.newNumber ? ' · HĐ ' + esc(h.newNumber) : ''}</div>` : ''}
+        ${h.note ? `<div class="h-note">${esc(h.note)}</div>` : ''}
+      </li>`).join('');
     openSheet('#sheet-form');
+  }
+
+  /** Gợi ý tên công ty bảo hiểm: các tên đã nhập + vài công ty phổ biến. */
+  function fillInsurerList() {
+    const seen = new Map();
+    state.customers.map((c) => c.insCompany).concat(COMMON_INSURERS).forEach((n) => {
+      if (n && !seen.has(norm(n))) seen.set(norm(n), n);
+    });
+    $('#ins-companies').innerHTML = Array.from(seen.values()).map((n) => `<option value="${esc(n)}">`).join('');
+  }
+  function scrollToFirstErr(form) {
+    const f = $('.has-err', form);
+    if (f) f.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
   async function saveForm(ev) {
@@ -388,19 +466,27 @@
     const issue = parseVNDate($('#f-issue').value);
     const expiry = parseVNDate($('#f-expiry').value);
     const note = $('#f-note').value.trim();
+    const insCompany = $('#f-ins-company').value.trim().replace(/\s+/g, ' ');
+    const insNumber = $('#f-ins-number').value.trim();
+    const insExpiry = parseVNDate($('#f-ins-expiry').value);
     let ok = true;
     if (!name) { setErr('f-name', 'Cần nhập họ tên.'); ok = false; }
     if (issue === null) { setErr('f-issue', 'Ngày không hợp lệ (dd/mm/yyyy).'); ok = false; }
     if (expiry === null) { setErr('f-expiry', 'Ngày không hợp lệ (dd/mm/yyyy).'); ok = false; }
     else if (!expiry) { setErr('f-expiry', 'Cần nhập ngày hết hạn.'); ok = false; }
     if (ok && issue && expiry < issue) { setErr('f-expiry', 'Ngày hết hạn phải sau ngày cấp.'); ok = false; }
-    if (!ok) return;
+    // Bảo hiểm không bắt buộc, nhưng đã nhập thì cần đủ công ty + ngày hết hạn
+    if (insExpiry === null) { setErr('f-ins-expiry', 'Ngày không hợp lệ (dd/mm/yyyy).'); ok = false; }
+    else if (!insExpiry && (insCompany || insNumber)) { setErr('f-ins-expiry', 'Cần nhập ngày hết hạn bảo hiểm.'); ok = false; }
+    if (insExpiry && !insCompany) { setErr('f-ins-company', 'Cần nhập công ty bảo hiểm.'); ok = false; }
+    if (!ok) { scrollToFirstErr(form); return; }
 
     const now = new Date().toISOString();
     const old = editingId ? byId(editingId) : null;
+    const ins = { insCompany, insNumber, insExpiry };
     const c = old
-      ? Object.assign({}, old, { name, plate, issue, expiry, note, updatedAt: now })
-      : { id: uid(), name, plate, issue, expiry, note, history: [], createdAt: now, updatedAt: now };
+      ? Object.assign({}, old, { name, plate, issue, expiry, note }, ins, { updatedAt: now })
+      : Object.assign({ id: uid(), name, plate, issue, expiry, note, history: [] }, ins, { insHistory: [], createdAt: now, updatedAt: now });
     try {
       await DB.put(c);
     } catch (e) { toast('Không lưu được: ' + e.message); return; }
@@ -486,7 +572,70 @@
     state.customers = state.customers.map((x) => (x.id === updated.id ? updated : x));
     closeSheet();
     render();
-    toast(`Đã gia hạn đến ${fmtDate(newExpiry)}`, { label: 'Thêm vào Lịch', fn: () => openCal(byId(updated.id)) }, 8000);
+    toast(`Đã gia hạn đến ${fmtDate(newExpiry)}`, { label: 'Thêm vào Lịch', fn: () => openCal(byId(updated.id), 'paper') }, 8000);
+  }
+
+  /* ---------- Gia hạn bảo hiểm ---------- */
+  let insRenewingId = null;
+  function openInsRenew(c) {
+    if (!c.insExpiry) { openForm(c); return; }
+    insRenewingId = c.id;
+    const form = $('#ins-form');
+    form.reset();
+    clearAllErr(form);
+    fillInsurerList();
+    const si = insStatusOf(c, state.today);
+    $('#i-name').textContent = c.name;
+    $('#i-sub').textContent = `${c.plate ? c.plate + ' · ' : ''}${c.insCompany ? c.insCompany + ' · ' : ''}Hạn cũ ${fmtDate(c.insExpiry)} (${si.text.toLowerCase()})`;
+    setDate('i-expiry', addYears(c.insExpiry, INS_RENEW_YEARS));
+    $('#i-company').value = c.insCompany || '';
+    $('#i-number').value = c.insNumber || '';
+    $('#chip-i-old').textContent = `+1 năm từ hạn cũ (${fmtDate(addYears(c.insExpiry, INS_RENEW_YEARS))})`;
+    $('#chip-i-today').textContent = `+1 năm từ hôm nay (${fmtDate(addYears(state.today, INS_RENEW_YEARS))})`;
+    openSheet('#sheet-ins');
+  }
+
+  async function saveInsRenew(ev) {
+    ev.preventDefault();
+    const c = byId(insRenewingId);
+    if (!c) { closeSheet(); return; }
+    const form = $('#ins-form');
+    clearAllErr(form);
+    const newExpiry = parseVNDate($('#i-expiry').value);
+    const company = $('#i-company').value.trim().replace(/\s+/g, ' ');
+    const number = $('#i-number').value.trim();
+    const note = $('#i-note').value.trim();
+    let ok = true;
+    if (newExpiry === null) { setErr('i-expiry', 'Ngày không hợp lệ.'); ok = false; }
+    else if (!newExpiry) { setErr('i-expiry', 'Cần nhập hạn mới.'); ok = false; }
+    if (!company) { setErr('i-company', 'Cần nhập công ty bảo hiểm.'); ok = false; }
+    if (!ok) { scrollToFirstErr(form); return; }
+    if (newExpiry <= c.insExpiry) {
+      const go = await ask('Hạn mới không sau hạn cũ', `Hạn cũ: ${fmtDate(c.insExpiry)}\nHạn mới: ${fmtDate(newExpiry)}\nVẫn lưu?`, [
+        { label: 'Vẫn lưu', value: true, style: 'btn-primary' },
+        { label: 'Sửa lại', value: false },
+      ]);
+      if (!go) return;
+    }
+    const entry = {
+      renewedOn: state.today,
+      oldExpiry: c.insExpiry, newExpiry,
+      oldCompany: c.insCompany || '', newCompany: company,
+      oldNumber: c.insNumber || '', newNumber: number,
+      note, at: new Date().toISOString(),
+    };
+    const updated = Object.assign({}, c, {
+      insCompany: company,
+      insNumber: number,
+      insExpiry: newExpiry,
+      insHistory: (c.insHistory || []).concat([entry]),
+      updatedAt: new Date().toISOString(),
+    });
+    try { await DB.put(updated); } catch (e) { toast('Không lưu được: ' + e.message); return; }
+    state.customers = state.customers.map((x) => (x.id === updated.id ? updated : x));
+    closeSheet();
+    render();
+    toast(`Đã gia hạn bảo hiểm đến ${fmtDate(newExpiry)}`, { label: 'Thêm vào Lịch', fn: () => openCal(byId(updated.id), 'ins') }, 8000);
   }
 
   /* ---------- File Lịch (.ics) ---------- */
@@ -535,6 +684,35 @@
       'END:VEVENT',
     ]);
   }
+  function buildInsuranceICS(c) {
+    const who = c.plate ? `${c.name} (${c.plate})` : c.name;
+    const desc = [
+      `Khách: ${c.name}`,
+      c.plate && `Biển số: ${c.plate}`,
+      c.insCompany && `Công ty bảo hiểm: ${c.insCompany}`,
+      c.insNumber && `Số HĐ bảo hiểm: ${c.insNumber}`,
+      `Ngày hết hạn bảo hiểm: ${fmtDate(c.insExpiry)}`,
+      'Bảo hiểm vật chất xe — ngân hàng là bên thụ hưởng.',
+      c.note && `Ghi chú: ${c.note}`,
+    ].filter(Boolean).join('\n');
+    const alarm = (trigger, text) => ['BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(text + who)}`, `TRIGGER:${trigger}`, 'END:VALARM'];
+    return icsWrap([
+      'BEGIN:VEVENT',
+      `UID:${c.id}-bh-${icsDate(c.insExpiry)}@giay-di-duong`,
+      `DTSTAMP:${icsStamp()}`,
+      `DTSTART;VALUE=DATE:${icsDate(c.insExpiry)}`,
+      `DTEND;VALUE=DATE:${icsDate(addDays(c.insExpiry, 1))}`,
+      `SUMMARY:${icsText('Hết hạn bảo hiểm xe: ' + who)}`,
+      `DESCRIPTION:${icsText(desc)}`,
+      'TRANSP:TRANSPARENT',
+      // Giống giấy đi đường: nhắc 8:00 sáng; thêm mốc trước 30 ngày để kịp nhắc khách tái tục
+    ].concat(
+      alarm('-P29DT16H', 'Còn 30 ngày hết hạn bảo hiểm xe: '),
+      alarm('-P6DT16H', 'Còn 7 ngày hết hạn bảo hiểm xe: '),
+      alarm('-PT16H', 'Ngày mai hết hạn bảo hiểm xe: '),
+      ['END:VEVENT'],
+    ));
+  }
   function buildBackupReminderICS() {
     // Thứ Sáu gần nhất (kể cả hôm nay) lúc 17:00 giờ VN = 10:00 UTC, lặp lại hằng tuần
     const dow = new Date(isoToMs(state.today)).getUTCDay(); // 0 = Chủ nhật, 5 = thứ Sáu
@@ -577,19 +755,31 @@
   }
 
   let calCustomerId = null;
-  function openCal(c) {
+  /** which: 'paper' | 'ins' | 'both' — hiện phần Lịch nào. */
+  function openCal(c, which) {
     if (!c) return;
+    which = which || 'both';
     calCustomerId = c.id;
     $('#cal-name').textContent = c.name;
     $('#cal-sub').textContent = c.plate || '';
     $('#cal-date').textContent = fmtDate(c.expiry);
-    const blob = new Blob([buildCustomerICS(c)], { type: 'text/calendar' });
-    $('#cal-share').hidden = !shareableFile(blob, 'test.ics');
+    $('#cal-ins-date').textContent = c.insExpiry ? fmtDate(c.insExpiry) : '';
+    $('#cal-paper').hidden = which === 'ins';
+    $('#cal-ins').hidden = which === 'paper' || !c.insExpiry;
+    const canShare = !!shareableFile(new Blob(['x'], { type: 'text/calendar' }), 'test.ics');
+    $$('.cal-share').forEach((b) => { b.hidden = !canShare; });
     openSheet('#sheet-cal');
   }
-  function calFile() {
+  function calFile(kind) {
     const c = byId(calCustomerId);
     if (!c) return null;
+    if (kind === 'ins') {
+      if (!c.insExpiry) return null;
+      return {
+        blob: new Blob([buildInsuranceICS(c)], { type: 'text/calendar;charset=utf-8' }),
+        name: `bao-hiem-${safeFileName(c.name)}-${icsDate(c.insExpiry)}.ics`,
+      };
+    }
     return {
       blob: new Blob([buildCustomerICS(c)], { type: 'text/calendar;charset=utf-8' }),
       name: `het-han-${safeFileName(c.name)}-${icsDate(c.expiry)}.ics`,
@@ -609,7 +799,7 @@
     if (!state.customers.length) { toast('Chưa có dữ liệu để sao lưu'); return; }
     const data = {
       app: 'giay-di-duong',
-      version: 1,
+      version: 2, // v2: thêm insCompany, insNumber, insExpiry, insHistory (bảo hiểm)
       exportedAt: new Date().toISOString(),
       count: state.customers.length,
       customers: state.customers,
@@ -650,6 +840,18 @@
       note: String(h.note || ''),
       at: String(h.at || ''),
     })) : [];
+    // File sao lưu cũ (v1) không có phần bảo hiểm → để trống
+    const insHistory = Array.isArray(raw.insHistory) ? raw.insHistory.filter((h) => h && isValidISO(h.newExpiry)).map((h) => ({
+      renewedOn: isValidISO(h.renewedOn) ? h.renewedOn : h.newExpiry,
+      oldExpiry: isValidISO(h.oldExpiry) ? h.oldExpiry : '',
+      newExpiry: h.newExpiry,
+      oldCompany: String(h.oldCompany || ''),
+      newCompany: String(h.newCompany || ''),
+      oldNumber: String(h.oldNumber || ''),
+      newNumber: String(h.newNumber || ''),
+      note: String(h.note || ''),
+      at: String(h.at || ''),
+    })) : [];
     return {
       id: String(raw.id || uid()),
       name,
@@ -658,6 +860,10 @@
       expiry,
       note: String(raw.note || ''),
       history,
+      insCompany: String(raw.insCompany || '').trim(),
+      insNumber: String(raw.insNumber || '').trim(),
+      insExpiry: isValidISO(raw.insExpiry) ? raw.insExpiry : '',
+      insHistory,
       createdAt: String(raw.createdAt || now),
       updatedAt: String(raw.updatedAt || now),
     };
@@ -701,7 +907,7 @@
     } catch (e) { toast('Không khôi phục được: ' + e.message); return; }
     await markBackedUp(); // dữ liệu vừa lấy từ file sao lưu nên coi như đã có bản sao lưu
     closeSheet();
-    state.filter = null; state.query = ''; $('#q').value = '';
+    state.kind = 'all'; state.filter = null; state.query = ''; $('#q').value = '';
     render();
     toast(`Đã khôi phục ${list.length} khách`);
     requestPersist();
@@ -718,10 +924,17 @@
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#dialog').hidden) closeSheet(); });
 
     $$('.stat').forEach((b) => b.addEventListener('click', () => {
-      state.filter = state.filter === b.dataset.filter ? null : b.dataset.filter;
+      // Bấm ô đếm → chuyển sang loại hạn đó và lọc theo nhóm; bấm lại → bỏ lọc nhóm
+      if (state.kind === b.dataset.kind && state.filter === b.dataset.filter) state.filter = null;
+      else { state.kind = b.dataset.kind; state.filter = b.dataset.filter; }
       render();
     }));
-    $('#btn-clear-filter').addEventListener('click', () => { state.filter = null; state.query = ''; $('#q').value = ''; render(); });
+    $$('.seg button').forEach((b) => b.addEventListener('click', () => {
+      state.kind = b.dataset.kind;
+      if (state.kind === 'all') state.filter = null;
+      render();
+    }));
+    $('#btn-clear-filter').addEventListener('click', () => { state.kind = 'all'; state.filter = null; state.query = ''; $('#q').value = ''; render(); });
     $('#q').addEventListener('input', (e) => { state.query = e.target.value.trim(); render(); });
 
     $('#list').addEventListener('click', (e) => {
@@ -732,14 +945,15 @@
       if (!c) return;
       if (btn.dataset.act === 'edit') openForm(c);
       else if (btn.dataset.act === 'renew') openRenew(c);
-      else if (btn.dataset.act === 'cal') openCal(c);
+      else if (btn.dataset.act === 'renew-ins') openInsRenew(c);
+      else if (btn.dataset.act === 'cal') openCal(c, state.kind === 'all' ? 'both' : state.kind);
     });
     $('#empty').addEventListener('click', (e) => { if (e.target.closest('[data-act="add-first"]')) openForm(null); });
 
     // Form khách
     $('#form').addEventListener('submit', saveForm);
     $('#btn-delete').addEventListener('click', deleteCurrent);
-    ['f-name', 'f-plate', 'f-issue', 'f-expiry'].forEach((id) => $('#' + id).addEventListener('input', () => clearErr(id)));
+    ['f-name', 'f-plate', 'f-issue', 'f-expiry', 'f-ins-company', 'f-ins-expiry'].forEach((id) => $('#' + id).addEventListener('input', () => clearErr(id)));
     $('#f-plate').addEventListener('blur', (e) => { e.target.value = e.target.value.toUpperCase(); });
     $('#f-issue').addEventListener('input', () => {
       // Có ngày cấp mà chưa có ngày hết hạn → tự gợi ý +90 ngày
@@ -773,18 +987,30 @@
       setDate('r-expiry', addDays(c.expiry, RENEW_DAYS)); renewExpiryTouched = true; clearErr('r-expiry');
     });
 
-    // Lịch
-    $('#cal-download').addEventListener('click', () => {
-      const f = calFile();
-      if (f) downloadBlob(f.blob, f.name);
+    // Form gia hạn bảo hiểm
+    $('#ins-form').addEventListener('submit', saveInsRenew);
+    ['i-expiry', 'i-company'].forEach((id) => $('#' + id).addEventListener('input', () => clearErr(id)));
+    $('#chip-i-old').addEventListener('click', () => {
+      const c = byId(insRenewingId);
+      if (!c) return;
+      setDate('i-expiry', addYears(c.insExpiry, INS_RENEW_YEARS)); clearErr('i-expiry');
     });
-    $('#cal-share').addEventListener('click', async () => {
-      const f = calFile();
+    $('#chip-i-today').addEventListener('click', () => { setDate('i-expiry', addYears(state.today, INS_RENEW_YEARS)); clearErr('i-expiry'); });
+
+    // Lịch
+    $$('[data-cal]').forEach((b) => b.addEventListener('click', () => {
+      const f = calFile(b.dataset.cal);
+      if (f) downloadBlob(f.blob, f.name);
+    }));
+    $$('[data-cal-share]').forEach((b) => b.addEventListener('click', async () => {
+      const kind = b.dataset.calShare;
+      const f = calFile(kind);
       if (!f) return;
       const file = shareableFile(f.blob, f.name);
       if (!file) { downloadBlob(f.blob, f.name); return; }
-      try { await navigator.share({ files: [file], title: 'Lịch hết hạn giấy đi đường' }); } catch (e) { /* hủy */ }
-    });
+      const title = kind === 'ins' ? 'Lịch hết hạn bảo hiểm xe' : 'Lịch hết hạn giấy đi đường';
+      try { await navigator.share({ files: [file], title }); } catch (e) { /* hủy */ }
+    }));
 
     // Sao lưu
     $('#m-export').addEventListener('click', exportData);
@@ -843,7 +1069,7 @@
   }
 
   // Cho phép kiểm thử từ bên ngoài (không ảnh hưởng người dùng)
-  window.__gdd = { parseVNDate, statusOf, buildCustomerICS, buildBackupReminderICS, todayISO, addDays, diffDays, matches };
+  window.__gdd = { parseVNDate, statusOf, insStatusOf, buildCustomerICS, buildInsuranceICS, buildBackupReminderICS, cleanCustomer, todayISO, addDays, addYears, diffDays, matches };
 
   start();
 })();
