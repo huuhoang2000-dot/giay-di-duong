@@ -1,0 +1,27 @@
+# Giấy đi đường
+
+App cá nhân (PWA) theo dõi hạn giấy đi đường của khách vay mua xe. Cài lên màn hình chính iPhone, chạy được khi không có mạng. Dữ liệu chỉ lưu trên điện thoại (IndexedDB), không gửi đi đâu.
+
+## Các file trong thư mục
+
+| File | Dùng để làm gì |
+|---|---|
+| `index.html` | Khung trang: các nút, ô nhập, bảng trượt |
+| `style.css` | Giao diện: màu sắc, cỡ chữ, hỗ trợ tai thỏ, chế độ tối |
+| `app.js` | Toàn bộ chức năng: lưu dữ liệu, tính ngày (giờ VN), lọc, tìm, gia hạn, file Lịch, sao lưu |
+| `sw.js` | Service worker: lưu sẵn app để mở được khi mất mạng |
+| `manifest.webmanifest` | Tên app, icon, màu, chế độ toàn màn hình khi cài |
+| `icon-*.png` | Icon app |
+
+## Cập nhật app sau này
+
+1. Sửa code.
+2. Mở `sw.js`, tăng số phiên bản: `giay-di-duong-v1` → `giay-di-duong-v2`.
+3. Tải các file đã sửa lên GitHub (Add file → Upload files → Commit changes).
+4. Mở app trên iPhone; khi thấy thông báo "Đã có bản cập nhật mới" thì bấm **Tải lại**.
+
+## Lưu ý quan trọng
+
+- **Không bao giờ tải file sao lưu (`giay-di-duong-sao-luu-*.json`) lên GitHub.** File đó chứa dữ liệu khách; kho GitHub Pages miễn phí là công khai.
+- Dữ liệu trong Safari và trong app ở màn hình chính là **riêng biệt**. Hãy nhập dữ liệu trong app đã cài.
+- Xóa app khỏi màn hình chính sẽ xóa luôn dữ liệu. Hãy sao lưu hằng tuần.

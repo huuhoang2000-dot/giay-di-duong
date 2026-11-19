@@ -1,0 +1,322 @@
+/* ===== Màu sắc & kích thước chung ===== */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  --brand: #0e7c66;
+  --brand-dark: #0a5f4f;
+  --brand-soft: #e2f3ee;
+  --bg: #f2f4f6;
+  --card: #ffffff;
+  --text: #16201e;
+  --muted: #5f6b68;
+  --line: #e2e7e6;
+  --input-bg: #f6f8f8;
+
+  --red: #d92d20;     --red-bg: #fdebea;     --red-text: #a3160b;
+  --orange: #f2700a;  --orange-bg: #ffeedd;  --orange-text: #a84500;
+  --yellow: #e0ad00;  --yellow-bg: #fff6cf;  --yellow-text: #7d5b00;
+
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(16, 24, 22, .06), 0 2px 8px rgba(16, 24, 22, .05);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand: #14a083;
+    --brand-dark: #0d7a64;
+    --brand-soft: #123a32;
+    --bg: #0d1211;
+    --card: #19201f;
+    --text: #eef3f2;
+    --muted: #9aa7a4;
+    --line: #2a3331;
+    --input-bg: #222b29;
+    --red-bg: #3a1714;     --red-text: #ff9b92;
+    --orange-bg: #3a2310;  --orange-text: #ffb877;
+    --yellow-bg: #362c0b;  --yellow-text: #f3d36b;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
+
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  overscroll-behavior-y: none;
+}
+body.modal-open { overflow: hidden; }
+
+button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
+input, textarea { font: inherit; font-size: 17px; color: var(--text); } /* >=16px để iPhone không tự phóng to */
+
+/* Dải màu sau thanh trạng thái để chữ giờ/pin luôn dễ đọc khi cuộn */
+.statusbar-bg {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: var(--safe-top);
+  background: var(--brand);
+  z-index: 30;
+}
+
+/* ===== Đầu trang ===== */
+.topbar {
+  background: var(--brand);
+  color: #fff;
+  padding: calc(var(--safe-top) + 12px) calc(16px + var(--safe-right)) 46px calc(16px + var(--safe-left));
+}
+.title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.topbar h1 { margin: 0; font-size: 26px; font-weight: 750; letter-spacing: -.3px; }
+.topbar .sub { margin: 2px 0 0; font-size: 14px; opacity: .85; }
+.icon-btn {
+  width: 44px; height: 44px; border: 0; border-radius: 22px;
+  background: rgba(255,255,255,.16); display: grid; place-items: center;
+}
+.icon-btn svg { fill: #fff; }
+.icon-btn:active { background: rgba(255,255,255,.3); }
+
+.wrap { padding: 0 calc(14px + var(--safe-right)) calc(110px + var(--safe-bottom)) calc(14px + var(--safe-left)); }
+
+/* ===== 3 ô đếm ===== */
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: -34px; }
+.stat {
+  border: 2px solid transparent; border-radius: var(--radius);
+  background: var(--card); box-shadow: var(--shadow);
+  padding: 10px 6px 9px; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  transition: transform .1s ease;
+}
+.stat:active { transform: scale(.97); }
+.stat-num { font-size: 30px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat-label { font-size: 13px; color: var(--muted); font-weight: 600; text-align: center; }
+.stat-over .stat-num { color: var(--red); }
+.stat-soon .stat-num { color: var(--orange); }
+.stat-month .stat-num { color: var(--yellow-text); }
+.stat-over[aria-pressed="true"]  { border-color: var(--red);    background: var(--red-bg); }
+.stat-soon[aria-pressed="true"]  { border-color: var(--orange); background: var(--orange-bg); }
+.stat-month[aria-pressed="true"] { border-color: var(--yellow); background: var(--yellow-bg); }
+
+/* ===== Thông báo ===== */
+.banner {
+  margin-top: 12px; padding: 12px 14px; border-radius: var(--radius);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between;
+}
+.banner-text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 200px; font-size: 14.5px; }
+.banner-text b { font-size: 15.5px; }
+.banner-btns { display: flex; gap: 8px; }
+.banner.warn { background: var(--yellow-bg); color: var(--yellow-text); }
+.banner.tip { background: var(--brand-soft); color: var(--text); }
+.inline-ico { vertical-align: -3px; }
+
+/* ===== Tìm kiếm ===== */
+.search-wrap {
+  position: sticky; top: var(--safe-top); z-index: 5;
+  background: var(--bg);
+  margin: 0 calc(-14px - var(--safe-right)) 0 calc(-14px - var(--safe-left));
+  padding: 12px calc(14px + var(--safe-right)) 8px calc(14px + var(--safe-left));
+}
+.search {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--card); border-radius: 12px; padding: 0 12px; box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+}
+.search svg { color: var(--muted); flex: none; }
+.search input {
+  flex: 1; border: 0; outline: 0; background: transparent; height: 46px; min-width: 0;
+  -webkit-appearance: none; appearance: none;
+}
+
+.list-head { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 2px 4px; color: var(--muted); font-size: 14px; }
+.link { border: 0; background: none; color: var(--brand); font-weight: 650; padding: 6px 4px; }
+
+/* ===== Danh sách khách ===== */
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.card {
+  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+  border-left: 6px solid var(--line); overflow: hidden;
+}
+.card.st-over  { border-left-color: var(--red);    background: var(--red-bg); }
+.card.st-soon  { border-left-color: var(--orange); background: var(--orange-bg); }
+.card.st-month { border-left-color: var(--yellow); background: var(--yellow-bg); }
+.card.st-ok    { border-left-color: var(--brand); }
+
+.card-main { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 12px 14px 8px; }
+.card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.name { font-size: 17.5px; font-weight: 700; line-height: 1.25; word-break: break-word; }
+.badge {
+  flex: none; font-size: 13px; font-weight: 700; padding: 3px 9px; border-radius: 99px;
+  background: var(--brand-soft); color: var(--brand-dark); white-space: nowrap;
+}
+.st-over .badge  { background: var(--red);    color: #fff; }
+.st-soon .badge  { background: var(--orange); color: #fff; }
+.st-month .badge { background: var(--yellow); color: #3b2b00; }
+@media (prefers-color-scheme: dark) { .st-ok .badge { color: #9fe3d2; } }
+
+.card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 6px; font-size: 14.5px; color: var(--muted); }
+.plate {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-weight: 700; font-size: 14px;
+  color: var(--text); background: var(--card); border: 1.5px solid var(--text); border-radius: 6px; padding: 1px 6px;
+}
+.card-meta b { color: var(--text); font-weight: 650; }
+.note { margin-top: 6px; font-size: 14px; color: var(--muted); white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.renew-count { font-size: 13px; color: var(--muted); }
+
+.card-actions { display: flex; gap: 8px; padding: 2px 12px 12px; }
+.card-actions .btn { flex: 1 1 0; min-width: 0; min-height: 42px; padding: 8px 8px; font-size: 15px; white-space: nowrap; gap: 5px; }
+
+/* ===== Nút ===== */
+.btn {
+  border: 0; border-radius: 11px; min-height: 44px; padding: 10px 14px;
+  font-weight: 650; font-size: 15.5px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn svg { flex: none; }
+.btn:active { opacity: .75; }
+.btn.sm { min-height: 36px; padding: 6px 12px; font-size: 14.5px; }
+.btn.wide { width: 100%; margin-top: 10px; }
+.btn-primary { background: var(--brand); color: #fff; }
+.btn-ghost { background: rgba(127,140,137,.14); color: var(--text); }
+.card .btn-ghost { background: var(--card); border: 1px solid var(--line); }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger-ghost { background: transparent; color: var(--red); border: 1px solid var(--red); margin-top: 22px; }
+
+.fab {
+  position: fixed; z-index: 20;
+  right: calc(18px + var(--safe-right)); bottom: calc(18px + var(--safe-bottom));
+  width: 62px; height: 62px; border-radius: 31px; border: 0;
+  background: var(--brand); color: #fff; display: grid; place-items: center;
+  box-shadow: 0 6px 18px rgba(14,124,102,.4);
+}
+.fab:active { transform: scale(.95); }
+
+/* ===== Trống ===== */
+.empty { text-align: center; padding: 40px 20px 10px; color: var(--muted); }
+.empty h3 { color: var(--text); margin: 8px 0 4px; font-size: 18px; }
+.empty p { margin: 4px 0 16px; }
+.privacy-note { text-align: center; font-size: 13px; color: var(--muted); margin: 22px 0 0; }
+
+/* ===== Bảng trượt (sheet) ===== */
+.backdrop {
+  position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.4);
+  opacity: 0; transition: opacity .25s ease;
+}
+.backdrop.show { opacity: 1; }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  max-height: calc(100% - var(--safe-top) - 14px);
+  background: var(--card); border-radius: 18px 18px 0 0;
+  display: flex; flex-direction: column;
+  transform: translateY(105%); transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  box-shadow: 0 -8px 30px rgba(0,0,0,.18);
+}
+.sheet.show { transform: none; }
+.sheet > form { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.sheet-head {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  padding: 8px calc(8px + var(--safe-right)) 8px calc(8px + var(--safe-left)); border-bottom: 1px solid var(--line); flex: none;
+}
+.sheet-head h2 { margin: 0; font-size: 17px; font-weight: 700; text-align: center; }
+.head-btn { border: 0; background: none; color: var(--brand); font-size: 17px; padding: 10px 10px; min-height: 44px; justify-self: start; }
+.sheet-head > :last-child { justify-self: end; }
+.head-btn.strong { font-weight: 700; }
+.sheet-body {
+  overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  padding: 16px calc(16px + var(--safe-right)) calc(28px + var(--safe-bottom)) calc(16px + var(--safe-left));
+}
+
+/* ===== Ô nhập ===== */
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; min-width: 0; }
+.field label { font-size: 14px; font-weight: 650; color: var(--muted); }
+.field label em { color: var(--red); font-style: normal; }
+.field input, .field textarea {
+  width: 100%; border: 1px solid var(--line); border-radius: 11px; background: var(--input-bg);
+  padding: 11px 12px; outline: none; -webkit-appearance: none; appearance: none;
+}
+.field input:focus, .field textarea:focus { border-color: var(--brand); background: var(--card); box-shadow: 0 0 0 3px var(--brand-soft); }
+.field textarea { resize: vertical; min-height: 76px; }
+.field.has-err input { border-color: var(--red); }
+.err { color: var(--red); font-size: 13px; min-height: 0; }
+.err:empty { display: none; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.date-field { position: relative; }
+.date-field input[type="text"] { padding-right: 46px; font-variant-numeric: tabular-nums; letter-spacing: .2px; }
+.date-pick {
+  position: absolute; top: 0; right: 0; width: 46px; height: 100%;
+  display: grid; place-items: center; color: var(--brand);
+}
+.date-pick input[type="date"] {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; border: 0; padding: 0; margin: 0; cursor: pointer;
+  -webkit-appearance: none; appearance: none; background: transparent; font-size: 16px;
+}
+.date-pick input[type="date"]::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: -4px 0 14px; }
+.chip {
+  border: 1px solid var(--brand); color: var(--brand); background: var(--brand-soft);
+  border-radius: 99px; padding: 7px 12px; font-size: 14px; font-weight: 650; min-height: 36px;
+}
+.chip:active { opacity: .7; }
+.hint { font-size: 13.5px; color: var(--muted); margin: -6px 0 10px; }
+
+.who-box { background: var(--input-bg); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
+.who-name { font-weight: 750; font-size: 18px; }
+.who-sub { color: var(--muted); font-size: 14.5px; margin-top: 2px; }
+
+.history { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
+.history h3 { margin: 0 0 8px; font-size: 15px; }
+.history ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 14.5px; }
+.history .h-note { color: var(--muted); font-size: 13.5px; }
+
+.cal-facts { margin: 0 0 6px; padding-left: 20px; font-size: 15px; display: flex; flex-direction: column; gap: 4px; }
+.howto { margin-top: 18px; font-size: 14.5px; background: var(--input-bg); border-radius: 12px; padding: 12px 14px; }
+.howto ol { margin: 6px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.howto .hint { margin: 6px 0 0; }
+
+.info-box { background: var(--brand-soft); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; font-size: 15px; }
+.menu-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left;
+  border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+}
+.menu-item:active { background: var(--input-bg); }
+.mi-title { font-weight: 700; font-size: 16px; color: var(--brand); }
+.mi-sub { font-size: 13.5px; color: var(--muted); }
+.about { font-size: 13px; color: var(--muted); text-align: center; margin-top: 14px; }
+
+/* ===== Hộp xác nhận ===== */
+.dialog-wrap {
+  position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.45);
+  display: grid; place-items: center; padding: 24px;
+}
+.dialog { background: var(--card); border-radius: 16px; width: min(340px, 100%); padding: 18px 16px 14px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+.dialog h3 { margin: 0 0 6px; font-size: 18px; text-align: center; }
+.dialog p { margin: 0 0 14px; color: var(--muted); text-align: center; font-size: 15px; white-space: pre-line; }
+.dlg-btns { display: flex; flex-direction: column; gap: 8px; }
+.dlg-btns .btn { width: 100%; }
+
+/* ===== Thông báo nhỏ ===== */
+.toast {
+  position: fixed; z-index: 80; left: calc(14px + var(--safe-left)); right: calc(14px + var(--safe-right));
+  bottom: calc(92px + var(--safe-bottom));
+  background: #1f2927; color: #fff; border-radius: 12px; padding: 10px 10px 10px 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 15px;
+}
+.toast button { border: 0; background: rgba(255,255,255,.14); color: #8ff0d6; font-weight: 700; border-radius: 9px; padding: 8px 12px; white-space: nowrap; }
+
+@media (max-width: 380px) {
+  .stat-label { font-size: 12px; }
+  .stat-num { font-size: 27px; }
+}
+
+@media (min-width: 700px) {
+  .wrap, .topbar .title-row { max-width: 640px; margin-left: auto; margin-right: auto; }
+  .sheet { max-width: 560px; margin: 0 auto; }
+}

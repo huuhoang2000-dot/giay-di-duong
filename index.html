@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Giấy đi đường</title>
+<meta name="description" content="Theo dõi hạn giấy đi đường của khách vay mua xe">
+<meta name="theme-color" content="#0e7c66">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Giấy đi đường">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- Dải màu phía sau thanh trạng thái (tai thỏ / Dynamic Island) -->
+<div class="statusbar-bg" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="title-row">
+    <div>
+      <h1>Giấy đi đường</h1>
+      <p class="sub" id="today-label"></p>
+    </div>
+    <button id="btn-menu" class="icon-btn" aria-label="Sao lưu và cài đặt">
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="stats" aria-label="Thống kê theo nhóm">
+    <button class="stat stat-over" data-filter="over" aria-pressed="false">
+      <span class="stat-num" id="n-over">0</span><span class="stat-label">Quá hạn</span>
+    </button>
+    <button class="stat stat-soon" data-filter="soon" aria-pressed="false">
+      <span class="stat-num" id="n-soon">0</span><span class="stat-label">Còn ≤ 7 ngày</span>
+    </button>
+    <button class="stat stat-month" data-filter="month" aria-pressed="false">
+      <span class="stat-num" id="n-month">0</span><span class="stat-label">Còn 8–30 ngày</span>
+    </button>
+  </section>
+
+  <div id="install-tip" class="banner tip" hidden>
+    <div class="banner-text">
+      <b>Cài app lên màn hình chính</b>
+      <span>Bấm nút Chia sẻ <svg viewBox="0 0 24 24" width="16" height="16" class="inline-ico" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> → “Thêm vào MH chính”. Dữ liệu trong Safari và trong app là riêng biệt, nên hãy nhập dữ liệu trong app.</span>
+    </div>
+    <button id="tip-close" class="btn btn-ghost sm">Đã hiểu</button>
+  </div>
+
+  <div id="backup-banner" class="banner warn" hidden>
+    <div class="banner-text">
+      <b>Nhắc sao lưu hằng tuần</b>
+      <span id="backup-text"></span>
+    </div>
+    <div class="banner-btns">
+      <button id="bb-later" class="btn btn-ghost sm">Để sau</button>
+      <button id="bb-now" class="btn btn-primary sm">Sao lưu ngay</button>
+    </div>
+  </div>
+
+  <div class="search-wrap">
+    <div class="search">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <input id="q" type="search" placeholder="Tìm theo tên hoặc biển số" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Tìm kiếm">
+    </div>
+  </div>
+
+  <div class="list-head">
+    <span id="list-info"></span>
+    <button id="btn-clear-filter" class="link" hidden>Bỏ lọc</button>
+  </div>
+
+  <ul id="list" class="list"></ul>
+
+  <div id="empty" class="empty" hidden></div>
+
+  <p class="privacy-note">Dữ liệu chỉ lưu trên điện thoại này, không gửi đi đâu.</p>
+</main>
+
+<button id="btn-add" class="fab" aria-label="Thêm khách">
+  <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
+</button>
+
+<div id="backdrop" class="backdrop" hidden></div>
+
+<!-- Thêm / sửa khách -->
+<section id="sheet-form" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="form-title">
+  <form id="form" novalidate autocomplete="off">
+    <div class="sheet-head">
+      <button type="button" class="head-btn" data-close>Hủy</button>
+      <h2 id="form-title">Thêm khách</h2>
+      <button type="submit" class="head-btn strong">Lưu</button>
+    </div>
+    <div class="sheet-body">
+      <div class="field">
+        <label for="f-name">Họ tên khách <em>*</em></label>
+        <input id="f-name" type="text" autocapitalize="words" autocorrect="off" enterkeyhint="next" placeholder="VD: Nguyễn Văn An">
+        <small class="err" data-err="f-name"></small>
+      </div>
+      <div class="field">
+        <label for="f-plate">Biển số xe</label>
+        <input id="f-plate" type="text" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="VD: 47A-123.45">
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="f-issue">Ngày cấp</label>
+          <div class="date-field">
+            <input id="f-issue" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10">
+            <span class="date-pick" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <input type="date" tabindex="-1" aria-label="Chọn ngày cấp">
+            </span>
+          </div>
+          <small class="err" data-err="f-issue"></small>
+        </div>
+        <div class="field">
+          <label for="f-expiry">Ngày hết hạn <em>*</em></label>
+          <div class="date-field">
+            <input id="f-expiry" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10">
+            <span class="date-pick" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <input type="date" tabindex="-1" aria-label="Chọn ngày hết hạn">
+            </span>
+          </div>
+          <small class="err" data-err="f-expiry"></small>
+        </div>
+      </div>
+      <div class="chips">
+        <button type="button" class="chip" id="chip-form-90">Hạn = ngày cấp + 90 ngày</button>
+      </div>
+      <div class="field">
+        <label for="f-note">Ghi chú</label>
+        <textarea id="f-note" rows="3" placeholder="SĐT, số hợp đồng, đại lý…"></textarea>
+      </div>
+      <div id="form-history" class="history" hidden>
+        <h3>Lịch sử gia hạn</h3>
+        <ol id="history-list"></ol>
+      </div>
+      <button type="button" id="btn-delete" class="btn btn-danger-ghost wide" hidden>Xóa khách này</button>
+    </div>
+  </form>
+</section>
+
+<!-- Gia hạn -->
+<section id="sheet-renew" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="renew-title">
+  <form id="renew-form" novalidate autocomplete="off">
+    <div class="sheet-head">
+      <button type="button" class="head-btn" data-close>Hủy</button>
+      <h2 id="renew-title">Đã gia hạn</h2>
+      <button type="submit" class="head-btn strong">Lưu</button>
+    </div>
+    <div class="sheet-body">
+      <div class="who-box">
+        <div class="who-name" id="r-name"></div>
+        <div class="who-sub" id="r-sub"></div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="r-issue">Ngày cấp mới</label>
+          <div class="date-field">
+            <input id="r-issue" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10">
+            <span class="date-pick" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <input type="date" tabindex="-1" aria-label="Chọn ngày cấp mới">
+            </span>
+          </div>
+          <small class="err" data-err="r-issue"></small>
+        </div>
+        <div class="field">
+          <label for="r-expiry">Hạn mới <em>*</em></label>
+          <div class="date-field">
+            <input id="r-expiry" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10">
+            <span class="date-pick" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <input type="date" tabindex="-1" aria-label="Chọn ngày hết hạn mới">
+            </span>
+          </div>
+          <small class="err" data-err="r-expiry"></small>
+        </div>
+      </div>
+      <p class="hint">Gợi ý sẵn: hạn mới = ngày cấp mới + 90 ngày. Có thể sửa lại.</p>
+      <div class="chips">
+        <button type="button" class="chip" id="chip-r-issue">+90 ngày từ ngày cấp mới</button>
+        <button type="button" class="chip" id="chip-r-old">+90 ngày từ hạn cũ</button>
+      </div>
+      <div class="field">
+        <label for="r-note">Ghi chú lần gia hạn (không bắt buộc)</label>
+        <input id="r-note" type="text" placeholder="VD: khách đến chi nhánh nhận giấy mới">
+      </div>
+    </div>
+  </form>
+</section>
+
+<!-- Thêm vào Lịch -->
+<section id="sheet-cal" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="cal-title">
+  <div class="sheet-head">
+    <span class="head-btn"></span>
+    <h2 id="cal-title">Thêm vào Lịch</h2>
+    <button type="button" class="head-btn strong" data-close>Xong</button>
+  </div>
+  <div class="sheet-body">
+    <div class="who-box">
+      <div class="who-name" id="cal-name"></div>
+      <div class="who-sub" id="cal-sub"></div>
+    </div>
+    <ul class="cal-facts">
+      <li>Sự kiện cả ngày vào <b id="cal-date"></b></li>
+      <li>Nhắc lúc 8:00 sáng: <b>trước 7 ngày</b> và <b>trước 1 ngày</b></li>
+    </ul>
+    <button type="button" id="cal-download" class="btn btn-primary wide">Tạo sự kiện Lịch (.ics)</button>
+    <button type="button" id="cal-share" class="btn btn-ghost wide" hidden>Chia sẻ / Lưu file .ics</button>
+    <div class="howto">
+      <b>Trên iPhone:</b>
+      <ol>
+        <li>Bấm “Tạo sự kiện Lịch”. Nếu iPhone hỏi, chọn <b>Xem</b> (hoặc Mở).</li>
+        <li>Bấm <b>Thêm vào Lịch</b> / <b>Thêm tất cả</b>.</li>
+        <li>Nếu file vào mục Tải về: mở app <b>Tệp → Tải về</b>, bấm vào file .ics rồi thêm vào Lịch.</li>
+      </ol>
+      <p class="hint">Lưu ý: sự kiện chứa tên và biển số khách. Nếu Lịch đồng bộ iCloud, sự kiện sẽ nằm trên iCloud của bạn.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Menu sao lưu -->
+<section id="sheet-menu" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="menu-title">
+  <div class="sheet-head">
+    <span class="head-btn"></span>
+    <h2 id="menu-title">Sao lưu &amp; cài đặt</h2>
+    <button type="button" class="head-btn strong" data-close>Xong</button>
+  </div>
+  <div class="sheet-body">
+    <div class="info-box" id="backup-info"></div>
+    <button type="button" class="menu-item" id="m-export">
+      <span class="mi-title">Sao lưu dữ liệu (xuất file)</span>
+      <span class="mi-sub">Lưu file vào Tệp / iCloud Drive, hoặc gửi qua Zalo, Email cho chính bạn</span>
+    </button>
+    <button type="button" class="menu-item" id="m-import">
+      <span class="mi-title">Khôi phục từ file sao lưu</span>
+      <span class="mi-sub">Chọn file .json đã xuất trước đó</span>
+    </button>
+    <button type="button" class="menu-item" id="m-remind">
+      <span class="mi-title">Thêm nhắc sao lưu hằng tuần vào Lịch</span>
+      <span class="mi-sub">Lịch iPhone sẽ nhắc 17:00 thứ Sáu mỗi tuần</span>
+    </button>
+    <input type="file" id="import-file" accept=".json,application/json" hidden>
+    <p class="about">Dữ liệu chỉ lưu trên điện thoại này (IndexedDB), không gửi lên mạng. App chạy được khi không có mạng.<br>Phiên bản <span id="app-version"></span></p>
+  </div>
+</section>
+
+<!-- Hộp xác nhận -->
+<div id="dialog" class="dialog-wrap" hidden>
+  <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-title" aria-describedby="dlg-msg">
+    <h3 id="dlg-title"></h3>
+    <p id="dlg-msg"></p>
+    <div id="dlg-btns" class="dlg-btns"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden role="status" aria-live="polite">
+  <span id="toast-msg"></span>
+  <button id="toast-act" type="button" hidden></button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
