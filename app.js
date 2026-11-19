@@ -2,7 +2,7 @@
    Toàn bộ dữ liệu lưu trong IndexedDB trên chính điện thoại, không gửi đi đâu. */
 'use strict';
 (function () {
-  const APP_VERSION = '1.2.2';
+  const APP_VERSION = '1.2.3';
   const DAY = 86400000;
   const VN_OFFSET = 7 * 3600000; // Việt Nam: UTC+7, không đổi giờ mùa hè
   const RENEW_DAYS = 90;
@@ -104,10 +104,11 @@
       const add = (d, mo, y, idx) => {
         const iso = `${y}-${pad(+mo)}-${pad(+d)}`;
         if (+y < 2000 || +y > 2100 || !isValidISO(iso)) return;
-        // Nhãn có thể nằm cuối dòng trên ("Có giá trị đến:" ↵ "12/12/2026")
+        // Nhãn có thể nằm cuối dòng trên ("Có giá trị đến:" ↵ "12/12/2026", "...cấp" ↵ "ngày 09/09/2022")
         const before = n.slice(Math.max(0, idx - 40), idx);
-        const ctx = (n.slice(0, idx).trim().length < 3 && i > 0 ? normKeep(lines[i - 1]).slice(-30) + ' ' : '') + before;
-        if (/sinh|cccd|cmnd|can cuoc|dinh danh|qlhc|ttxh/.test(ctx)) return; // bỏ ngày sinh, ngày cấp CCCD
+        const ctx = (n.slice(0, idx).trim().length < 8 && i > 0 ? normKeep(lines[i - 1]).slice(-40) + ' ' : '') + before;
+        // bỏ ngày sinh, ngày cấp CCCD ("do Cục Cảnh sát QLHC về TTXH / quản lý hành chính về trật tự xã hội cấp")
+        if (/sinh|cccd|cmnd|can cuoc|dinh danh|qlhc|ttxh|hanh chinh|trat tu/.test(ctx)) return;
         out.push({ iso, ctx });
       };
       let m;
@@ -123,6 +124,10 @@
 
   /** Ngày hết hạn = ngày có nhãn "hết hạn/đến…", không có thì lấy ngày muộn nhất; ngày cấp tương tự. */
   function pickDates(dates, today) {
+    // Hạn giấy/bảo hiểm phải gần hiện tại; ngày quá xa thường do máy đọc sai số (2026 → 2076)
+    // hoặc là ngày cũ không liên quan (đăng ký xe, cấp CCCD…)
+    const lo = addDays(today, -730), hi = addYears(today, 5);
+    dates = dates.filter((d) => d.iso >= lo && d.iso <= hi);
     if (!dates.length) return {};
     const isos = dates.map((d) => d.iso).sort();
     const ends = dates.filter((d) => isEndCtx(d.ctx));
@@ -158,14 +163,21 @@
   }
 
   // "...giấy chứng nhận đăng ký xe ô tô của ↵ TRƯƠNG ĐÌNH KHÁNH" (biên nhận thế chấp của ngân hàng) đứng đầu vì chữ in to, rõ
+  // Không dùng "khách hàng" trơn: con dấu hay có "Giám đốc khách hàng cá nhân"
   const NAME_KEYS = ['dang ky xe o to cua', 'dang ky xe may cua', 'dang ky xe cua', 'nguoi duoc bao hiem', 'ten chu xe', 'chu xe',
-    'ho va ten', 'ho ten', 'ten khach hang', 'khach hang', 'nguoi mua bao hiem', 'ben mua bao hiem'];
+    'ho va ten', 'ho ten', 'ten khach hang', 'nguoi mua bao hiem', 'ben mua bao hiem'];
+  const NOT_NAME = /dang ky|xe o to|ngan hang|bao hiem|giay|chung nhan|ca nhan|khach hang|dai dien|giam doc|chi nhanh|dia chi/;
   function nameFrom(text) {
     let s = text.replace(/\([^)]*\)?/g, ' ').replace(/^[\s:.\-–]+/, ''); // bỏ "(Owner's full name):"
     const cut = normKeep(s).search(/dia chi|nam sinh|ngay sinh|sdt|dien thoai|cccd|cmnd|[0-9,;]/);
     if (cut >= 0) s = s.slice(0, cut);
     s = s.replace(/[\s:.\-–]+$/, '').replace(/\s+/g, ' ');
-    return /^[\p{L} ]{4,50}$/u.test(s) && s.split(' ').length >= 2 ? titleCaseVN(s) : '';
+    if (!/^[\p{L} ]{4,50}$/u.test(s)) return '';
+    const n = normKeep(s);
+    const words = n.split(' ');
+    // Tên thật: 2–5 chữ, chữ nào cũng có nguyên âm ("Zs Hn" là chữ rác), không phải chữ in sẵn trên giấy
+    if (words.length < 2 || words.length > 5 || !words.every((w) => /[aeiouy]/.test(w)) || NOT_NAME.test(n)) return '';
+    return titleCaseVN(s);
   }
   function findName(lines) {
     for (const key of NAME_KEYS) {
@@ -856,6 +868,19 @@
     } finally { URL.revokeObjectURL(url); }
   }
 
+  function rotateCanvas(src, deg) {
+    const r = deg * Math.PI / 180;
+    const w = src.width, h = src.height;
+    const cw = Math.round(Math.abs(w * Math.cos(r)) + Math.abs(h * Math.sin(r)));
+    const ch = Math.round(Math.abs(w * Math.sin(r)) + Math.abs(h * Math.cos(r)));
+    const cv = document.createElement('canvas');
+    cv.width = cw; cv.height = ch;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, cw, ch);
+    g.translate(cw / 2, ch / 2); g.rotate(r); g.drawImage(src, -w / 2, -h / 2);
+    return cv;
+  }
+
   function setupOcrBlocks() {
     $$('.ocr[data-ocr]').forEach((box) => {
       const key = box.dataset.ocr;
@@ -894,22 +919,31 @@
     let pass = 1;
     ocrProgress = (m) => {
       const pct = m.progress ? ` ${Math.round(m.progress * 100)}%` : '';
-      if (m.status === 'recognizing text') ocrStatus(key, `Đang đọc chữ (lượt ${pass}/2)…` + pct);
+      if (m.status === 'recognizing text') ocrStatus(key, (pass > 2 ? 'Ảnh hơi nghiêng, đang thử xoay lại…' : `Đang đọc chữ (lượt ${pass}/2)…`) + pct);
       else if (/loading|initializ/.test(m.status) && first) ocrStatus(key, 'Đang tải bộ đọc chữ (chỉ lần đầu, khoảng 5 MB)…' + pct);
     };
     try {
       const [worker, canvas] = await Promise.all([getOcrWorker(), imageToCanvas(file)]);
       // Đọc 2 lượt rồi gộp: PSM 4 tách đúng cột (giấy biên nhận + bản sao cà vẹt nằm cạnh nhau),
       // PSM 6 đọc được cả dòng bị chữ ký/con dấu đè (vd "Ngày 13 tháng 10 năm 2026")
+      // rotateAuto: tự xoay thẳng ảnh chụp nghiêng
       await worker.setParameters({ tessedit_pageseg_mode: '4' });
-      const a = await worker.recognize(canvas);
+      const a = await worker.recognize(canvas, { rotateAuto: true });
       pass = 2;
       await worker.setParameters({ tessedit_pageseg_mode: '6' });
-      const b = await worker.recognize(canvas);
-      const text = a.data.text + '\n' + b.data.text;
-      const parsed = parseDoc(text, state.today);
+      const b = await worker.recognize(canvas, { rotateAuto: true });
+      let text = a.data.text + '\n' + b.data.text;
+      let parsed = parseDoc(text, state.today);
+      // Tự xoay chỉ sửa được góc nhỏ. Không thấy ngày hết hạn → thử xoay thêm ±10° (ảnh chụp nghiêng nhiều)
+      for (const deg of [10, -10]) {
+        if (parsed.expiry) break;
+        pass = 3;
+        const c = await worker.recognize(rotateCanvas(canvas, deg), { rotateAuto: true });
+        text += '\n' + c.data.text;
+        parsed = parseDoc(text, state.today);
+      }
       const types = Object.keys(OCR_TARGETS[key]);
-      ocrState[key] = { parsed, text: a.data.text.trim() + '\n\n— lượt 2 —\n' + b.data.text.trim(), type: types.includes(parsed.type) ? parsed.type : types[0] };
+      ocrState[key] = { parsed, text, type: types.includes(parsed.type) ? parsed.type : types[0] };
       ocrStatus(key, '');
       renderOcrResult(key);
     } catch (e) {
