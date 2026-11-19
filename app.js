@@ -2,7 +2,7 @@
    Toàn bộ dữ liệu lưu trong IndexedDB trên chính điện thoại, không gửi đi đâu. */
 'use strict';
 (function () {
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '1.2.0';
   const DAY = 86400000;
   const VN_OFFSET = 7 * 3600000; // Việt Nam: UTC+7, không đổi giờ mùa hè
   const RENEW_DAYS = 90;
@@ -81,6 +81,137 @@
     if (norm(c.name).includes(nq) || norm(c.insCompany).includes(nq)) return true;
     const pq = plateKey(q);
     return pq.length > 0 && (plateKey(c.plate).includes(pq) || plateKey(c.insNumber).includes(pq));
+  }
+
+  /* ---------- Nhận dạng thông tin trong chữ đọc từ ảnh giấy tờ ----------
+     Chỉ là gợi ý: người dùng luôn xem lại và chọn mục nào điền vào form. */
+  /** Bỏ dấu từng ký tự, giữ nguyên độ dài để vị trí khớp với chuỗi gốc. */
+  const normKeep = (s) => Array.from(String(s)).map((ch) => {
+    if (ch === 'đ' || ch === 'Đ') return 'd';
+    return ch.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().charAt(0) || ' ';
+  }).join('');
+  const titleCaseVN = (s) => s.toLocaleLowerCase('vi').replace(/(^|\s)(\p{L})/gu, (m, a, b) => a + b.toLocaleUpperCase('vi'));
+
+  function findDates(lines) {
+    const out = [];
+    lines.forEach((line, i) => {
+      const n = normKeep(line);
+      const add = (d, mo, y, idx) => {
+        const iso = `${y}-${pad(+mo)}-${pad(+d)}`;
+        if (+y < 2000 || +y > 2100 || !isValidISO(iso)) return;
+        // Nhãn có thể nằm cuối dòng trên ("Có giá trị đến:" ↵ "12/12/2026")
+        const before = n.slice(Math.max(0, idx - 40), idx);
+        const ctx = (n.slice(0, idx).trim().length < 3 && i > 0 ? normKeep(lines[i - 1]).slice(-30) + ' ' : '') + before;
+        if (/sinh/.test(ctx)) return; // bỏ ngày sinh
+        out.push({ iso, ctx });
+      };
+      let m;
+      const r1 = /(\d{1,2})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{4})/g;
+      while ((m = r1.exec(n))) add(m[1], m[2], m[3], m.index);
+      const r2 = /ngay\s*(\d{1,2})\s*thang\s*(\d{1,2})\s*nam\s*(\d{4})/g;
+      while ((m = r2.exec(n))) add(m[1], m[2], m[3], m.index);
+    });
+    return out;
+  }
+  const isEndCtx = (ctx) => /het han|gia tri den|hieu luc den|den ngay|den het|\bden\b.{0,16}$/.test(ctx);
+  const isStartCtx = (ctx) => /ngay cap|cap ngay|bat dau|hieu luc tu|\btu\b.{0,16}$/.test(ctx);
+
+  /** Ngày hết hạn = ngày có nhãn "hết hạn/đến…", không có thì lấy ngày muộn nhất; ngày cấp tương tự. */
+  function pickDates(dates, today) {
+    if (!dates.length) return {};
+    const isos = dates.map((d) => d.iso).sort();
+    const ends = dates.filter((d) => isEndCtx(d.ctx));
+    let expiry = ends.length ? ends[ends.length - 1].iso : null;
+    if (!expiry) {
+      if (isos.length === 1) return isos[0] > today ? { expiry: isos[0] } : { issue: isos[0] };
+      expiry = isos[isos.length - 1];
+    }
+    const start = dates.find((d) => isStartCtx(d.ctx) && d.iso < expiry);
+    const issue = start ? start.iso : (isos[0] < expiry ? isos[0] : '');
+    return { issue, expiry };
+  }
+
+  function findPlate(lines) {
+    let best = null;
+    lines.forEach((line) => {
+      const u = normKeep(line).toUpperCase();
+      const re = /(?:^|[^0-9A-Z])(\d{2})\s?[-–]?\s?([A-Z]{1,2}\d?)\s?[-–.]?\s?(\d{3}\s?[.,]?\s?\d{2}|\d{4})(?![0-9])/g;
+      let m;
+      while ((m = re.exec(u))) {
+        const d = m[3].replace(/\D/g, '');
+        const plate = `${m[1]}${m[2]}-${d.length === 5 ? d.slice(0, 3) + '.' + d.slice(3) : d}`;
+        const labeled = /bien|bks/i.test(u.slice(0, m.index + 1));
+        if (!best || (labeled && !best.labeled)) best = { plate, labeled };
+      }
+    });
+    return best ? best.plate : '';
+  }
+
+  const NAME_KEYS = ['nguoi duoc bao hiem', 'ten chu xe', 'chu xe', 'ho va ten', 'ho ten', 'ten khach hang', 'khach hang', 'nguoi mua bao hiem', 'ben mua bao hiem'];
+  function findName(lines) {
+    for (const key of NAME_KEYS) {
+      for (const line of lines) {
+        const idx = normKeep(line).indexOf(key);
+        if (idx < 0) continue;
+        let rest = line.slice(idx + key.length).replace(/^[\s:.\-–]+/, '');
+        const cut = normKeep(rest).search(/dia chi|nam sinh|ngay sinh|sdt|dien thoai|cccd|cmnd|[0-9(,;]/);
+        if (cut >= 0) rest = rest.slice(0, cut);
+        rest = rest.replace(/[\s:.\-–]+$/, '').replace(/\s+/g, ' ');
+        if (/^[\p{L} ]{4,50}$/u.test(rest) && rest.split(' ').length >= 2) return titleCaseVN(rest);
+      }
+    }
+    return '';
+  }
+
+  // Tên hãng ngân hàng (BIDV, VietinBank, Agribank…) hay xuất hiện vì ngân hàng là bên thụ hưởng,
+  // nên chỉ nhận khi đi kèm chữ "bảo hiểm".
+  const INSURER_PATTERNS = [
+    [/bao viet/, 'Bảo Việt'], [/\bpvi\b/, 'PVI'], [/\bpti\b|bao hiem buu dien/, 'PTI'], [/bao minh/, 'Bảo Minh'],
+    [/\bmic\b|bao hiem quan doi/, 'MIC'], [/\bbic\b|bao hiem bidv/, 'BIC'], [/\bvbi\b|bao hiem vietinbank/, 'VBI'],
+    [/pjico|bao hiem petrolimex/, 'PJICO'], [/\bbsh\b|bao hiem sai gon ?- ?ha noi/, 'BSH'], [/\babic\b|bao hiem agribank/, 'ABIC'],
+    [/bao long/, 'Bảo Long'], [/\bvni\b|bao hiem hang khong/, 'Bảo hiểm Hàng không (VNI)'], [/liberty/, 'Liberty'],
+    [/tokio marine/, 'Tokio Marine'], [/\bmsig\b/, 'MSIG'], [/\bpacific cross\b/, 'Pacific Cross'],
+  ];
+  function findInsurer(text) {
+    const n = normKeep(text).replace(/\s+/g, ' ');
+    let best = null;
+    INSURER_PATTERNS.forEach(([re, name]) => {
+      const m = n.match(re);
+      if (m && (!best || m.index < best.index)) best = { index: m.index, name };
+    });
+    return best ? best.name : '';
+  }
+
+  const NUMBER_KEYS = ['so hop dong bao hiem', 'so giay chung nhan', 'giay chung nhan so', 'so gcn', 'gcn so', 'so don bao hiem',
+    'hop dong bao hiem so', 'so hop dong', 'hop dong so', 'so hd', 'hd so', 'policy no'];
+  function findContractNo(lines) {
+    for (const key of NUMBER_KEYS) {
+      for (const line of lines) {
+        const n = normKeep(line);
+        const idx = n.indexOf(key);
+        if (idx < 0 || /tin dung|cho vay|\bvay\b/.test(n)) continue; // bỏ số hợp đồng vay
+        const m = line.slice(idx + key.length).match(/^[\s:.#°º-]*([A-Za-z0-9][A-Za-z0-9/\-.]{3,30})/);
+        if (m && /\d/.test(m[1])) return m[1].replace(/[./-]+$/, '');
+      }
+    }
+    return '';
+  }
+
+  /** Đọc toàn bộ thông tin có thể từ chữ trong ảnh. type: 'paper' | 'ins' (đoán theo nội dung). */
+  function parseDoc(text, today) {
+    const clean = String(text || '').normalize('NFC');
+    const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const n = normKeep(clean);
+    const { issue = '', expiry = '' } = pickDates(findDates(lines), today || todayISO());
+    return {
+      type: /bao hiem/.test(n) && !/giay di duong/.test(n) ? 'ins' : 'paper',
+      name: findName(lines),
+      plate: findPlate(lines),
+      issue, expiry,
+      insCompany: findInsurer(clean),
+      insNumber: findContractNo(lines),
+      insExpiry: expiry,
+    };
   }
 
   /* ---------- Cơ sở dữ liệu trên máy (IndexedDB) ---------- */
@@ -426,6 +557,7 @@
     setDate('f-ins-expiry', c ? c.insExpiry : '');
     $('#btn-delete').hidden = !c;
     fillInsurerList();
+    resetOcr('form');
 
     const hist = (c && c.history) || [];
     $('#form-history').hidden = hist.length === 0;
@@ -531,6 +663,7 @@
     setDate('r-issue', state.today);
     setDate('r-expiry', addDays(state.today, RENEW_DAYS));
     $('#chip-r-old').textContent = `+90 ngày từ hạn cũ (${fmtDate(addDays(c.expiry, RENEW_DAYS))})`;
+    resetOcr('renew');
     openSheet('#sheet-renew');
   }
 
@@ -592,6 +725,7 @@
     $('#i-number').value = c.insNumber || '';
     $('#chip-i-old').textContent = `+1 năm từ hạn cũ (${fmtDate(addYears(c.insExpiry, INS_RENEW_YEARS))})`;
     $('#chip-i-today').textContent = `+1 năm từ hôm nay (${fmtDate(addYears(state.today, INS_RENEW_YEARS))})`;
+    resetOcr('ins');
     openSheet('#sheet-ins');
   }
 
@@ -636,6 +770,162 @@
     closeSheet();
     render();
     toast(`Đã gia hạn bảo hiểm đến ${fmtDate(newExpiry)}`, { label: 'Thêm vào Lịch', fn: () => openCal(byId(updated.id), 'ins') }, 8000);
+  }
+
+  /* ---------- Chụp giấy tờ → đọc chữ ngay trên điện thoại ----------
+     Dùng Tesseract.js để sẵn trong thư mục ocr/ (tải lần đầu khi bấm, sau đó chạy cả khi không có mạng).
+     Ảnh chỉ được đọc trong bộ nhớ rồi bỏ đi, không lưu, không gửi đi đâu. */
+  const OCR_TARGETS = { // khối chụp ảnh → loại giấy → [thông tin, ô nhập]
+    form: {
+      paper: [['name', 'f-name'], ['plate', 'f-plate'], ['issue', 'f-issue'], ['expiry', 'f-expiry']],
+      ins: [['name', 'f-name'], ['plate', 'f-plate'], ['insCompany', 'f-ins-company'], ['insNumber', 'f-ins-number'], ['insExpiry', 'f-ins-expiry']],
+    },
+    renew: { paper: [['issue', 'r-issue'], ['expiry', 'r-expiry']] },
+    ins: { ins: [['insExpiry', 'i-expiry'], ['insCompany', 'i-company'], ['insNumber', 'i-number']] },
+  };
+  const OCR_LABELS = { name: 'Họ tên', plate: 'Biển số', issue: 'Ngày cấp', expiry: 'Ngày hết hạn', insCompany: 'Công ty bảo hiểm', insNumber: 'Số HĐ bảo hiểm', insExpiry: 'Hết hạn bảo hiểm' };
+  const OCR_DATES = new Set(['issue', 'expiry', 'insExpiry']);
+  const ICON_CAMERA = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+  const ocrState = {}; // theo khối: { parsed, text, type }
+
+  let ocrWorkerP = null;
+  let ocrProgress = null;
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('Không tải được ' + src));
+      document.head.appendChild(s);
+    });
+  }
+  function getOcrWorker() {
+    if (!ocrWorkerP) {
+      ocrWorkerP = (async () => {
+        const base = new URL('ocr/', location.href).href;
+        if (!window.Tesseract) await loadScript(base + 'tesseract.min.js');
+        return window.Tesseract.createWorker('vie', 1, { // 1 = chế độ LSTM
+          workerPath: base + 'worker.min.js',
+          corePath: base, // tự chọn bản có/không SIMD tùy máy
+          langPath: base,
+          gzip: true,
+          workerBlobURL: false,
+          logger: (m) => { if (ocrProgress) ocrProgress(m); },
+        });
+      })();
+      ocrWorkerP.catch(() => { ocrWorkerP = null; });
+    }
+    return ocrWorkerP;
+  }
+  /** Thu nhỏ ảnh (ảnh iPhone 12MP đọc rất chậm) — cạnh dài tối đa 2000px. */
+  async function imageToCanvas(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const scale = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.naturalWidth * scale); cv.height = Math.round(img.naturalHeight * scale);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      return cv;
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  function setupOcrBlocks() {
+    $$('.ocr[data-ocr]').forEach((box) => {
+      const key = box.dataset.ocr;
+      box.innerHTML = `<button type="button" class="btn btn-ghost ocr-btn">${ICON_CAMERA}Chụp giấy để tự điền</button>
+        <input type="file" accept="image/*" class="ocr-file" hidden>
+        <p class="ocr-status" hidden></p>
+        <div class="ocr-result" hidden></div>`;
+      $('.ocr-btn', box).addEventListener('click', () => { const f = $('.ocr-file', box); f.value = ''; f.click(); });
+      $('.ocr-file', box).addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; if (f) runOcr(key, f); });
+      $('.ocr-result', box).addEventListener('click', (e) => {
+        const t = e.target.closest('[data-ocr-type]');
+        if (t) { ocrState[key].type = t.dataset.ocrType; renderOcrResult(key); return; }
+        if (e.target.closest('[data-ocr-apply]')) applyOcr(key);
+        else if (e.target.closest('[data-ocr-cancel]')) resetOcr(key);
+      });
+    });
+  }
+  function ocrStatus(key, text) {
+    const st = $(`.ocr[data-ocr="${key}"] .ocr-status`);
+    st.hidden = !text; st.textContent = text || '';
+  }
+  function resetOcr(key) {
+    delete ocrState[key];
+    ocrStatus(key, '');
+    const res = $(`.ocr[data-ocr="${key}"] .ocr-result`);
+    res.hidden = true; res.innerHTML = '';
+  }
+
+  async function runOcr(key, file) {
+    const box = $(`.ocr[data-ocr="${key}"]`);
+    const btn = $('.ocr-btn', box);
+    resetOcr(key);
+    btn.disabled = true;
+    const first = !ocrWorkerP;
+    ocrStatus(key, first ? 'Đang tải bộ đọc chữ (chỉ lần đầu, khoảng 5 MB)…' : 'Đang đọc chữ…');
+    ocrProgress = (m) => {
+      const pct = m.progress ? ` ${Math.round(m.progress * 100)}%` : '';
+      if (m.status === 'recognizing text') ocrStatus(key, 'Đang đọc chữ…' + pct);
+      else if (/loading|initializ/.test(m.status) && first) ocrStatus(key, 'Đang tải bộ đọc chữ (chỉ lần đầu, khoảng 5 MB)…' + pct);
+    };
+    try {
+      const [worker, canvas] = await Promise.all([getOcrWorker(), imageToCanvas(file)]);
+      const { data } = await worker.recognize(canvas);
+      const parsed = parseDoc(data.text, state.today);
+      const types = Object.keys(OCR_TARGETS[key]);
+      ocrState[key] = { parsed, text: data.text, type: types.includes(parsed.type) ? parsed.type : types[0] };
+      ocrStatus(key, '');
+      renderOcrResult(key);
+    } catch (e) {
+      const offline = navigator.onLine === false && first;
+      ocrStatus(key, offline ? 'Lần đầu dùng cần có mạng để tải bộ đọc chữ. Kết nối mạng rồi thử lại.'
+        : 'Không đọc được ảnh: ' + ((e && e.message) || e));
+    } finally {
+      ocrProgress = null;
+      btn.disabled = false;
+    }
+  }
+
+  function renderOcrResult(key) {
+    const st = ocrState[key];
+    const res = $(`.ocr[data-ocr="${key}"] .ocr-result`);
+    const types = Object.keys(OCR_TARGETS[key]);
+    const items = OCR_TARGETS[key][st.type].filter(([f]) => st.parsed[f]);
+    const seg = types.length > 1 ? `<div class="seg ocr-seg">${types.map((t) => `<button type="button" data-ocr-type="${t}" aria-pressed="${t === st.type}">${KIND_NAMES[t]}</button>`).join('')}</div>` : '';
+    const list = items.map(([f, id]) => {
+      const val = OCR_DATES.has(f) ? fmtDate(st.parsed[f]) : st.parsed[f];
+      const cur = $('#' + id).value.trim();
+      // Form sửa khách: không tự ghi đè dữ liệu đang có; bảng gia hạn: ô đang là gợi ý nên ghi đè
+      const checked = key !== 'form' || !cur || cur === val;
+      return `<li><label><input type="checkbox" data-field="${f}" data-target="${id}" ${checked ? 'checked' : ''}>
+        <span class="ocr-k">${OCR_LABELS[f]}</span><b>${esc(val)}</b>${cur && cur !== val ? `<small>đang là: ${esc(cur)}</small>` : ''}</label></li>`;
+    }).join('');
+    res.innerHTML = `${seg}
+      ${items.length ? `<p class="ocr-title">Đọc được từ ảnh — chọn mục muốn điền:</p><ul class="ocr-items">${list}</ul>`
+        : '<p class="ocr-title">Không nhận ra thông tin nào. Thử chụp lại gần hơn, đủ sáng, giấy phẳng, không bị lóa.</p>'}
+      <div class="ocr-btns">
+        ${items.length ? '<button type="button" class="btn btn-primary sm" data-ocr-apply>Điền vào form</button>' : ''}
+        <button type="button" class="btn btn-ghost sm" data-ocr-cancel>Bỏ qua</button>
+      </div>
+      <details class="ocr-raw"><summary>Xem chữ đọc được</summary><pre>${esc(st.text.trim() || '(trống)')}</pre></details>`;
+    res.hidden = false;
+  }
+
+  function applyOcr(key) {
+    const st = ocrState[key];
+    if (!st) return;
+    let n = 0;
+    $$(`.ocr[data-ocr="${key}"] input[type="checkbox"]:checked`).forEach((cb) => {
+      const f = cb.dataset.field, id = cb.dataset.target;
+      if (OCR_DATES.has(f)) setDate(id, st.parsed[f]); else $('#' + id).value = st.parsed[f];
+      if (id === 'r-expiry') renewExpiryTouched = true;
+      clearErr(id);
+      n++;
+    });
+    resetOcr(key);
+    ocrStatus(key, n ? `Đã điền ${n} mục từ ảnh. Kiểm tra lại rồi bấm Lưu.` : 'Chưa chọn mục nào.');
   }
 
   /* ---------- File Lịch (.ics) ---------- */
@@ -916,6 +1206,7 @@
   /* ---------- Gắn sự kiện cho nút bấm ---------- */
   function bindEvents() {
     $$('.date-field').forEach(setupDateField);
+    setupOcrBlocks();
 
     $('#btn-add').addEventListener('click', () => openForm(null));
     $('#btn-menu').addEventListener('click', () => { renderBackupInfo(); openSheet('#sheet-menu'); });
@@ -1069,7 +1360,7 @@
   }
 
   // Cho phép kiểm thử từ bên ngoài (không ảnh hưởng người dùng)
-  window.__gdd = { parseVNDate, statusOf, insStatusOf, buildCustomerICS, buildInsuranceICS, buildBackupReminderICS, cleanCustomer, todayISO, addDays, addYears, diffDays, matches };
+  window.__gdd = { parseVNDate, statusOf, insStatusOf, buildCustomerICS, buildInsuranceICS, buildBackupReminderICS, cleanCustomer, parseDoc, todayISO, addDays, addYears, diffDays, matches };
 
   start();
 })();

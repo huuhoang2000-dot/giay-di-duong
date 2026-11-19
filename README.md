@@ -12,11 +12,12 @@ App cá nhân (PWA) theo dõi hạn giấy đi đường và hạn bảo hiểm 
 | `sw.js` | Service worker: lưu sẵn app để mở được khi mất mạng |
 | `manifest.webmanifest` | Tên app, icon, màu, chế độ toàn màn hình khi cài |
 | `icon-*.png` | Icon app |
+| `ocr/` | Bộ đọc chữ trong ảnh (Tesseract.js 6.0.1, dữ liệu tiếng Việt, giấy phép Apache-2.0) cho nút "Chụp giấy để tự điền". Chỉ tải về điện thoại khi bấm nút lần đầu (~5 MB). Ảnh chỉ đọc trên máy, không lưu, không gửi đi đâu. |
 
 ## Cập nhật app sau này
 
 1. Sửa code.
-2. Mở `sw.js`, tăng số phiên bản (hiện là `giay-di-duong-v2` → lần sau đổi thành `giay-di-duong-v3`).
+2. Mở `sw.js`, tăng số phiên bản (hiện là `giay-di-duong-v3` → lần sau đổi thành `giay-di-duong-v4`). Không cần đổi `giay-di-duong-ocr-v1` trừ khi thay file trong `ocr/`.
 3. Tải các file đã sửa lên GitHub (Add file → Upload files → Commit changes).
 4. Mở app trên iPhone; khi thấy thông báo "Đã có bản cập nhật mới" thì bấm **Tải lại**.
 
