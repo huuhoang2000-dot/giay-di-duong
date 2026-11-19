@@ -2,11 +2,12 @@
    Toàn bộ dữ liệu lưu trong IndexedDB trên chính điện thoại, không gửi đi đâu. */
 'use strict';
 (function () {
-  const APP_VERSION = '1.2.1';
+  const APP_VERSION = '1.2.2';
   const DAY = 86400000;
   const VN_OFFSET = 7 * 3600000; // Việt Nam: UTC+7, không đổi giờ mùa hè
   const RENEW_DAYS = 90;
   const INS_RENEW_YEARS = 1;
+  const PAPER_VALID_MONTHS = 3; // chỉ dùng để ước tính ngày cấp khi không đọc được từ ảnh
   const COMMON_INSURERS = ['Bảo Việt', 'PVI', 'PTI', 'Bảo Minh', 'MIC', 'BIC', 'VBI', 'PJICO', 'BSH'];
   const BACKUP_EVERY_DAYS = 7;
 
@@ -28,10 +29,14 @@
   function addDays(iso, n) { return msToISO(isoToMs(iso) + n * DAY); }
   function diffDays(fromISO, toISO) { return Math.round((isoToMs(toISO) - isoToMs(fromISO)) / DAY); }
   /** Cộng năm, giữ ngày/tháng; 29/02 sang năm không nhuận thành 28/02. */
-  function addYears(iso, n) {
+  function addYears(iso, n) { return addMonths(iso, 12 * n); }
+  /** Cộng tháng, giữ ngày; ngày không có trong tháng đích (31/02…) thành ngày cuối tháng. */
+  function addMonths(iso, n) {
     const [y, m, d] = iso.split('-').map(Number);
-    const last = new Date(Date.UTC(y + n, m, 0)).getUTCDate();
-    return `${y + n}-${pad(m)}-${pad(Math.min(d, last))}`;
+    const total = y * 12 + (m - 1) + n;
+    const ny = Math.floor(total / 12), nm = total % 12 + 1;
+    const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
+    return `${ny}-${pad(nm)}-${pad(Math.min(d, last))}`;
   }
   function fmtDate(iso) { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; }
   function isValidISO(iso) {
@@ -164,10 +169,11 @@
   }
   function findName(lines) {
     for (const key of NAME_KEYS) {
+      const re = new RegExp(key.replace(/ /g, '\\s*')); // máy đọc hay dính chữ: "ô tôcủa"
       for (let i = 0; i < lines.length; i++) {
-        const idx = normKeep(lines[i]).indexOf(key);
-        if (idx < 0) continue;
-        const rest = lines[i].slice(idx + key.length);
+        const m = normKeep(lines[i]).match(re);
+        if (!m) continue;
+        const rest = lines[i].slice(m.index + m[0].length);
         // Tên cùng dòng với nhãn, hoặc nằm ở dòng ngay dưới
         const restEmpty = !rest.replace(/\([^)]*\)?/g, '').replace(/[\s:.\-–]+/g, '');
         const name = nameFrom(rest) || (restEmpty && i + 1 < lines.length ? nameFrom(lines[i + 1]) : '');
@@ -217,11 +223,17 @@
     const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const n = normKeep(clean);
     const { issue = '', expiry = '' } = pickDates(findDates(lines), today || todayISO());
+    const type = /bao hiem/.test(n) && !/giay di duong/.test(n) ? 'ins' : 'paper';
+    // Ngày cấp hay bị con dấu đè. Giấy biên nhận thế chấp đã gặp đều có hiệu lực đúng 3 tháng
+    // → gợi ý ước tính (mặc định không chọn, người dùng tự quyết)
+    const issueGuess = type === 'paper' && expiry && !issue;
     return {
-      type: /bao hiem/.test(n) && !/giay di duong/.test(n) ? 'ins' : 'paper',
+      type,
       name: findName(lines),
       plate: findPlate(lines),
-      issue, expiry,
+      issue: issueGuess ? addMonths(expiry, -PAPER_VALID_MONTHS) : issue,
+      issueGuess,
+      expiry,
       insCompany: findInsurer(clean),
       insNumber: findContractNo(lines),
       insExpiry: expiry,
@@ -919,10 +931,13 @@
     const list = items.map(([f, id]) => {
       const val = OCR_DATES.has(f) ? fmtDate(st.parsed[f]) : st.parsed[f];
       const cur = $('#' + id).value.trim();
-      // Form sửa khách: không tự ghi đè dữ liệu đang có; bảng gia hạn: ô đang là gợi ý nên ghi đè
-      const checked = key !== 'form' || !cur || cur === val;
+      // Form sửa khách: không tự ghi đè dữ liệu đang có; bảng gia hạn: ô đang là gợi ý nên ghi đè.
+      // Ngày cấp ước tính (không đọc được) thì để người dùng tự chọn.
+      const guess = f === 'issue' && st.parsed.issueGuess;
+      const checked = !guess && (key !== 'form' || !cur || cur === val);
+      const label = guess ? `${OCR_LABELS[f]} (ước tính: hạn − ${PAPER_VALID_MONTHS} tháng, không đọc được trên ảnh)` : OCR_LABELS[f];
       return `<li><label><input type="checkbox" data-field="${f}" data-target="${id}" ${checked ? 'checked' : ''}>
-        <span class="ocr-k">${OCR_LABELS[f]}</span><b>${esc(val)}</b>${cur && cur !== val ? `<small>đang là: ${esc(cur)}</small>` : ''}</label></li>`;
+        <span class="ocr-k">${label}</span><b>${esc(val)}</b>${cur && cur !== val ? `<small>đang là: ${esc(cur)}</small>` : ''}</label></li>`;
     }).join('');
     res.innerHTML = `${seg}
       ${items.length ? `<p class="ocr-title">Đọc được từ ảnh — chọn mục muốn điền:</p><ul class="ocr-items">${list}</ul>`
