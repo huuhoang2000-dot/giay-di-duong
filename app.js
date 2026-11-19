@@ -2,7 +2,7 @@
    Toàn bộ dữ liệu lưu trong IndexedDB trên chính điện thoại, không gửi đi đâu. */
 'use strict';
 (function () {
-  const APP_VERSION = '1.2.3';
+  const APP_VERSION = '1.4.0';
   const DAY = 86400000;
   const VN_OFFSET = 7 * 3600000; // Việt Nam: UTC+7, không đổi giờ mùa hè
   const RENEW_DAYS = 90;
@@ -164,7 +164,7 @@
 
   // "...giấy chứng nhận đăng ký xe ô tô của ↵ TRƯƠNG ĐÌNH KHÁNH" (biên nhận thế chấp của ngân hàng) đứng đầu vì chữ in to, rõ
   // Không dùng "khách hàng" trơn: con dấu hay có "Giám đốc khách hàng cá nhân"
-  const NAME_KEYS = ['dang ky xe o to cua', 'dang ky xe may cua', 'dang ky xe cua', 'nguoi duoc bao hiem', 'ten chu xe', 'chu xe',
+  const NAME_KEYS = ['dang ky xe o to cua', 'dang ky xe may cua', 'dang ky xe cua', 'nguoi duoc bao hiem', 'ten chu xe', 'chu so huu', 'chu xe',
     'ho va ten', 'ho ten', 'ten khach hang', 'nguoi mua bao hiem', 'ben mua bao hiem'];
   const NOT_NAME = /dang ky|xe o to|ngan hang|bao hiem|giay|chung nhan|ca nhan|khach hang|dai dien|giam doc|chi nhanh|dia chi/;
   function nameFrom(text) {
@@ -252,6 +252,25 @@
     };
   }
 
+  /** Nội dung mã QR trên giấy biên nhận thế chấp, dạng:
+      "1. Xe: Ô tô con ↵ 2. Biển kiểm soát: 47B-203.58 ↵ 3. Chủ sở hữu: PHẠM THÚY KIỀU ↵
+       4.Ngày hiệu lực: 21/11/2026 ↵ 5.Ngày cấp: 21/08/2026". Mục nào có nhãn thì lấy chính xác theo nhãn. */
+  function parseQR(text, today) {
+    const p = parseDoc(text, today);
+    const firstDate = (line) => { const d = findDates([line]); return d.length ? d[0].iso : ''; };
+    String(text).normalize('NFC').split(/\r?\n/).forEach((line) => {
+      const n = normKeep(line);
+      const val = line.slice(line.indexOf(':') + 1);
+      if (/bien kiem soat|bien so/.test(n)) p.plate = findPlate([line]) || p.plate;
+      else if (/chu so huu|chu xe|ten chu|ho ten/.test(n)) p.name = nameFrom(val) || p.name;
+      else if (/ngay hieu luc|hieu luc den|het han|gia tri den/.test(n)) p.expiry = firstDate(line) || p.expiry;
+      else if (/ngay cap/.test(n)) p.issue = firstDate(line) || p.issue;
+    });
+    p.insExpiry = p.expiry;
+    p.issueGuess = false;
+    return p;
+  }
+
   /* ---------- Cơ sở dữ liệu trên máy (IndexedDB) ---------- */
   const DB = (() => {
     let dbp = null;
@@ -309,10 +328,40 @@
     today: todayISO(),
     lastBackupAt: null, // chuỗi ISO thời điểm sao lưu gần nhất
     snoozeUntil: 0,     // tạm ẩn nhắc sao lưu đến thời điểm này (ms)
+    settledOpen: false, // mục "Đã tất toán" đang mở
     ready: false,
     dbError: null,
   };
   const byId = (id) => state.customers.find((c) => c.id === id);
+  const activeCustomers = () => state.customers.filter((c) => !c.settledAt);
+
+  /* ---------- Nhắc Lịch: hạn nào đã có nhắc ----------
+     calendarAddedFor / insCalendarAddedFor = ngày hết hạn đã tạo file .ics (ghi lúc bấm tạo file,
+     hoặc khi người dùng tự đánh dấu). Khác hạn hiện tại → hạn hiện tại chưa có nhắc. */
+  const CAL_FIELD = { paper: 'calendarAddedFor', ins: 'insCalendarAddedFor' };
+  const dueOf = (c, kind) => (kind === 'ins' ? c.insExpiry || '' : c.expiry);
+  /** Hạn còn tới (từ hôm nay trở đi) của khách đang theo dõi mà chưa có nhắc. */
+  const needsCal = (c, kind, today) => !c.settledAt && !!dueOf(c, kind) && dueOf(c, kind) >= today && c[CAL_FIELD[kind]] !== dueOf(c, kind);
+  /** Hạn hiện tại đã có nhắc trong Lịch (để nhắc người dùng xóa khi hạn đổi hoặc khách tất toán). */
+  const hasCalFor = (c, kind, date) => !!date && c[CAL_FIELD[kind]] === date;
+
+  async function saveCustomers(list) {
+    await DB.putMany(list);
+    const map = new Map(list.map((c) => [c.id, c]));
+    state.customers = state.customers.map((x) => map.get(x.id) || x);
+  }
+  /** Ghi nhận đã tạo nhắc Lịch cho hạn hiện tại. items: [{ c, kind }] */
+  async function markCalendar(items) {
+    const byCust = new Map();
+    items.forEach(({ c, kind }) => {
+      const cur = byCust.get(c.id) || Object.assign({}, byId(c.id) || c);
+      cur[CAL_FIELD[kind]] = dueOf(cur, kind);
+      byCust.set(c.id, cur);
+    });
+    if (!byCust.size) return;
+    try { await saveCustomers(Array.from(byCust.values())); } catch (e) { toast('Không lưu được: ' + e.message); return; }
+    render();
+  }
 
   /* ---------- Hiển thị danh sách ---------- */
   function render() {
@@ -320,7 +369,8 @@
     $('#today-label').textContent = 'Hôm nay: ' + fmtDate(today);
 
     const kind = state.kind;
-    const rows = state.customers.map((c) => ({ c, s: statusOf(c, today), si: insStatusOf(c, today) }));
+    // Khách đã tất toán không đếm, không tô màu, nằm riêng ở mục "Đã tất toán" cuối danh sách
+    const rows = activeCustomers().map((c) => ({ c, s: statusOf(c, today), si: insStatusOf(c, today) }));
 
     const counts = { paper: { over: 0, soon: 0, month: 0, ok: 0 }, ins: { over: 0, soon: 0, month: 0, ok: 0 } };
     let insTotal = 0;
@@ -356,10 +406,23 @@
 
     $('#list').innerHTML = shown.map(cardHTML).join('');
 
+    // Mục "Đã tất toán (N)": chỉ hiện khi không lọc theo loại/nhóm hạn; ô tìm kiếm vẫn áp dụng
+    const settled = state.customers.filter((c) => c.settledAt)
+      .sort((a, b) => (a.settledAt < b.settledAt ? 1 : a.settledAt > b.settledAt ? -1 : a.name.localeCompare(b.name, 'vi')));
+    const settledShown = state.query ? settled.filter((c) => matches(c, state.query)) : settled;
+    const sec = $('#settled');
+    sec.hidden = !settled.length || kind !== 'all' || !!state.filter || (state.query && !settledShown.length);
+    sec.open = state.settledOpen;
+    $('#n-settled').textContent = state.query ? `${settledShown.length}/${settled.length}` : settled.length;
+    $('#settled-list').innerHTML = settledShown.map(settledCardHTML).join('');
+
     const empty = $('#empty');
     if (state.dbError) {
       empty.hidden = false;
       empty.innerHTML = `<h3>Không mở được bộ nhớ</h3><p>${esc(state.dbError)}</p>`;
+    } else if (state.ready && total === 0 && settled.length) {
+      empty.hidden = false;
+      empty.innerHTML = '<h3>Không còn khách nào đang theo dõi</h3><p>Khách đã tất toán nằm ở mục bên dưới. Bấm nút + để thêm khách mới.</p>';
     } else if (state.ready && total === 0) {
       empty.hidden = false;
       empty.innerHTML = '<h3>Chưa có khách nào</h3><p>Bấm nút + để thêm khách đầu tiên.</p><button class="btn btn-primary" data-act="add-first">Thêm khách</button>';
@@ -420,6 +483,13 @@
       </div>`;
     }
 
+    // Dấu "Chưa có nhắc Lịch" cho hạn còn tới (theo loại đang xem)
+    const missing = (kind === 'all' ? ['paper', 'ins'] : [kind]).filter((k) => needsCal(c, k, state.today));
+    const calNote = missing.length ? `<div class="cal-missing">
+        <span>${ICON_CAL}Chưa có nhắc Lịch${kind !== 'all' ? '' : missing.length === 2 ? ': giấy, bảo hiểm' : missing[0] === 'ins' ? ' (bảo hiểm)' : c.insExpiry ? ' (giấy)' : ''}</span>
+        <button type="button" class="link" data-act="mark-cal" data-kinds="${missing.join(',')}">Đã có nhắc</button>
+      </div>` : '';
+
     return `<li class="card tone-${main.key}" data-id="${esc(c.id)}">
       <button class="card-main" type="button" data-act="edit" aria-label="Sửa thông tin ${esc(c.name)}">
         <div class="card-top"><span class="name">${esc(c.name)}</span>${c.plate ? `<span class="plate">${esc(c.plate)}</span>` : ''}</div>
@@ -427,7 +497,22 @@
         ${counts.length ? `<div class="renew-count">Đã gia hạn: ${counts.join(', ')}</div>` : ''}
         ${c.note ? `<div class="note">${esc(c.note)}</div>` : ''}
       </button>
+      ${calNote}
       ${actions}
+    </li>`;
+  }
+
+  /** Thẻ khách đã tất toán: màu xám, không tô màu theo hạn. */
+  function settledCardHTML(c) {
+    const renewals = (c.history || []).length + (c.insHistory || []).length;
+    return `<li class="card card-settled" data-id="${esc(c.id)}">
+      <button class="card-main" type="button" data-act="edit" aria-label="Xem thông tin ${esc(c.name)}">
+        <div class="card-top"><span class="name">${esc(c.name)}</span>${c.plate ? `<span class="plate">${esc(c.plate)}</span>` : ''}</div>
+        <div class="settled-meta">Tất toán ngày <b>${fmtDate(c.settledAt)}</b> · hạn giấy cuối ${fmtDate(c.expiry)}${c.insExpiry ? ` · hạn BH cuối ${fmtDate(c.insExpiry)}` : ''}${renewals ? ` · đã gia hạn ${renewals} lần` : ''}</div>
+      </button>
+      <div class="card-actions">
+        <button class="btn btn-ghost" type="button" data-act="unsettle">Theo dõi lại</button>
+      </div>
     </li>`;
   }
 
@@ -462,7 +547,8 @@
     } else {
       text = '<b>Chưa sao lưu lần nào.</b>';
     }
-    $('#backup-info').innerHTML = `${text}<br>Đang có ${state.customers.length} khách trong app.`;
+    const nSettled = state.customers.length - activeCustomers().length;
+    $('#backup-info').innerHTML = `${text}<br>Đang theo dõi ${state.customers.length - nSettled} khách${nSettled ? `, ${nSettled} khách đã tất toán` : ''}.`;
   }
 
   /* ---------- Bảng trượt (sheet) ---------- */
@@ -594,6 +680,10 @@
     $('#f-ins-number').value = c ? (c.insNumber || '') : '';
     setDate('f-ins-expiry', c ? c.insExpiry : '');
     $('#btn-delete').hidden = !c;
+    $('#btn-settle').hidden = !c || !!c.settledAt;
+    $('#btn-unsettle').hidden = !c || !c.settledAt;
+    $('#form-settled-note').hidden = !c || !c.settledAt;
+    if (c && c.settledAt) $('#form-settled-note').textContent = `Khách đã tất toán ngày ${fmtDate(c.settledAt)}. Bấm “Theo dõi lại” nếu cần nhắc hạn tiếp.`;
     fillInsurerList();
     resetOcr('form');
 
@@ -666,6 +756,13 @@
     render();
     toast(old ? 'Đã lưu thay đổi' : `Đã thêm ${c.name}`);
     requestPersist();
+    // Khách mới, hoặc đổi ngày hết hạn → hỏi thêm nhắc Lịch (và nhắc xóa sự kiện hạn cũ nếu có)
+    if (c.settledAt) return;
+    const changes = [];
+    if (!old || old.expiry !== expiry) changes.push({ kind: 'paper', oldDate: old ? old.expiry : '', newDate: expiry });
+    const oldIns = old ? old.insExpiry || '' : '';
+    if (oldIns !== insExpiry) changes.push({ kind: 'ins', oldDate: oldIns, newDate: insExpiry });
+    if (changes.length) afterDueChange(old, c, changes);
   }
 
   async function deleteCurrent() {
@@ -743,7 +840,8 @@
     state.customers = state.customers.map((x) => (x.id === updated.id ? updated : x));
     closeSheet();
     render();
-    toast(`Đã gia hạn đến ${fmtDate(newExpiry)}`, { label: 'Thêm vào Lịch', fn: () => openCal(byId(updated.id), 'paper') }, 8000);
+    toast(`Đã gia hạn đến ${fmtDate(newExpiry)}`);
+    afterDueChange(c, updated, [{ kind: 'paper', oldDate: c.expiry, newDate: newExpiry }]);
   }
 
   /* ---------- Gia hạn bảo hiểm ---------- */
@@ -807,7 +905,8 @@
     state.customers = state.customers.map((x) => (x.id === updated.id ? updated : x));
     closeSheet();
     render();
-    toast(`Đã gia hạn bảo hiểm đến ${fmtDate(newExpiry)}`, { label: 'Thêm vào Lịch', fn: () => openCal(byId(updated.id), 'ins') }, 8000);
+    toast(`Đã gia hạn bảo hiểm đến ${fmtDate(newExpiry)}`);
+    afterDueChange(c, updated, [{ kind: 'ins', oldDate: c.insExpiry, newDate: newExpiry }]);
   }
 
   /* ---------- Chụp giấy tờ → đọc chữ ngay trên điện thoại ----------
@@ -823,6 +922,7 @@
   };
   const OCR_LABELS = { name: 'Họ tên', plate: 'Biển số', issue: 'Ngày cấp', expiry: 'Ngày hết hạn', insCompany: 'Công ty bảo hiểm', insNumber: 'Số HĐ bảo hiểm', insExpiry: 'Hết hạn bảo hiểm' };
   const OCR_DATES = new Set(['issue', 'expiry', 'insExpiry']);
+  const QR_FIELDS = ['name', 'plate', 'issue', 'expiry', 'insCompany', 'insNumber', 'insExpiry'];
   const ICON_CAMERA = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
   const ocrState = {}; // theo khối: { parsed, text, type }
 
@@ -853,19 +953,108 @@
     }
     return ocrWorkerP;
   }
-  /** Thu nhỏ ảnh (ảnh iPhone 12MP đọc rất chậm) — cạnh dài tối đa 2000px. */
-  async function imageToCanvas(file) {
+  async function loadImage(file) {
     const url = URL.createObjectURL(file);
     try {
       const img = new Image();
       img.src = url;
       await img.decode();
-      const scale = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
-      const cv = document.createElement('canvas');
-      cv.width = Math.round(img.naturalWidth * scale); cv.height = Math.round(img.naturalHeight * scale);
-      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-      return cv;
+      return img;
     } finally { URL.revokeObjectURL(url); }
+  }
+  /** Thu nhỏ ảnh để đọc chữ (ảnh iPhone 12MP đọc rất chậm) — cạnh dài tối đa 2000px. */
+  function imageToCanvas(img) {
+    const scale = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(img.naturalWidth * scale); cv.height = Math.round(img.naturalHeight * scale);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    return cv;
+  }
+
+  /* Tìm mã QR trong ảnh chụp cả tờ giấy. jsQR đọc cả ảnh lớn thì chậm và hay trượt khi mã nhỏ,
+     nên: (1) trên ảnh thu nhỏ, tìm vùng "giống QR" — dày đặc chấm đen/trắng theo cả 2 chiều (khác dòng chữ);
+     (2) cắt từng vùng ở ảnh gốc, phóng to, thử ảnh thường rồi ảnh đen trắng. Trả về chữ trong mã hoặc null. */
+  const toGray = (p, i) => p[i] * 0.3 + p[i + 1] * 0.59 + p[i + 2] * 0.11;
+  function qrCandidates(img) {
+    const W = img.naturalWidth, H = img.naturalHeight;
+    const S = 800 / Math.max(W, H), w = Math.round(W * S), h = Math.round(H * S);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0, w, h);
+    const px = g.getImageData(0, 0, w, h).data;
+    const gray = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) gray[i] = toGray(px, i * 4);
+    const cell = 12, cw = Math.floor(w / cell), ch = Math.floor(h / cell);
+    const score = new Float32Array(cw * ch);
+    for (let cy = 0; cy < ch; cy++) for (let cx = 0; cx < cw; cx++) {
+      let mean = 0;
+      for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) mean += gray[(cy * cell + y) * w + cx * cell + x];
+      mean = mean / (cell * cell) - 10;
+      let hT = 0, vT = 0, dark = 0;
+      for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) {
+        const i = (cy * cell + y) * w + cx * cell + x, b = gray[i] < mean;
+        if (b) dark++;
+        if (x && b !== (gray[i - 1] < mean)) hT++;
+        if (y && b !== (gray[i - w] < mean)) vT++;
+      }
+      const ratio = dark / (cell * cell);
+      score[cy * cw + cx] = ratio > 0.2 && ratio < 0.8 ? Math.min(hT, vT) : 0;
+    }
+    // Gom các ô điểm cao (8% cao nhất) thành vùng; giữ vùng gần vuông
+    const nz = Array.from(score).filter((v) => v > 0).sort((a, b) => b - a);
+    const T = nz[Math.floor(nz.length * 0.08)] || Infinity;
+    const seen = new Uint8Array(cw * ch), boxes = [];
+    for (let i = 0; i < cw * ch; i++) {
+      if (seen[i] || score[i] < T) continue;
+      const stack = [i]; seen[i] = 1;
+      let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1, n = 0, tot = 0;
+      while (stack.length) {
+        const k = stack.pop(), x = k % cw, y = (k / cw) | 0;
+        n++; tot += score[k];
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+          const nx = x + dx, ny = y + dy, j = ny * cw + nx;
+          if (nx >= 0 && ny >= 0 && nx < cw && ny < ch && !seen[j] && score[j] >= T * 0.6) { seen[j] = 1; stack.push(j); }
+        });
+      }
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+      if (n >= 4 && bw / bh > 0.5 && bw / bh < 2) boxes.push({ x0, y0, bw, bh, s: tot / n * Math.min(n, 30) });
+    }
+    boxes.sort((a, b) => b.s - a.s);
+    // Đổi về toạ độ ảnh gốc, nới rộng 35% mỗi phía để chắc chứa trọn mã
+    return boxes.slice(0, 5).map((b) => {
+      const k = cell / S, m = 0.35;
+      const sx = Math.max(0, (b.x0 - b.bw * m) * k), sy = Math.max(0, (b.y0 - b.bh * m) * k);
+      return { sx, sy, sw: Math.min(W - sx, b.bw * (1 + 2 * m) * k), sh: Math.min(H - sy, b.bh * (1 + 2 * m) * k) };
+    });
+  }
+  function decodeQRAt(img, r, target, blackWhite) {
+    const sc = target / Math.max(r.sw, r.sh);
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(r.sw * sc); cv.height = Math.round(r.sh * sc);
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, r.sx, r.sy, r.sw, r.sh, 0, 0, cv.width, cv.height);
+    const p = g.getImageData(0, 0, cv.width, cv.height).data;
+    if (blackWhite) {
+      let sum = 0;
+      for (let i = 0; i < p.length; i += 4) sum += toGray(p, i);
+      const thr = sum / (p.length / 4) * 0.8;
+      for (let i = 0; i < p.length; i += 4) { const v = toGray(p, i) < thr ? 0 : 255; p[i] = p[i + 1] = p[i + 2] = v; }
+    }
+    const res = window.jsQR(p, cv.width, cv.height, { inversionAttempts: 'dontInvert' });
+    return res ? res.data : null;
+  }
+  /** Chỉ nhận mã QR có thông tin dùng được (biển số hoặc ngày); bỏ qua mã chỉ là đường link. */
+  async function findQR(img) {
+    if (!window.jsQR) await loadScript(new URL('ocr/jsQR.js', location.href).href);
+    for (const r of qrCandidates(img)) {
+      for (const [target, bw] of [[600, false], [600, true], [900, false], [900, true]]) {
+        const text = decodeQRAt(img, r, target, bw);
+        if (!text) continue;
+        const p = parseQR(text, state.today);
+        if (p.plate || p.expiry) return { text, parsed: p };
+      }
+    }
+    return null;
   }
 
   function rotateCanvas(src, deg) {
@@ -923,7 +1112,24 @@
       else if (/loading|initializ/.test(m.status) && first) ocrStatus(key, 'Đang tải bộ đọc chữ (chỉ lần đầu, khoảng 5 MB)…' + pct);
     };
     try {
-      const [worker, canvas] = await Promise.all([getOcrWorker(), imageToCanvas(file)]);
+      const img = await loadImage(file);
+      // 1) Mã QR (giấy biên nhận thế chấp có sẵn biển số, chủ xe, ngày hiệu lực, ngày cấp): nhanh và đúng từng chữ
+      ocrStatus(key, 'Đang tìm mã QR…');
+      let qr = null;
+      try { qr = await findQR(img); } catch (e) { /* không đọc được QR thì đọc chữ như thường */ }
+      const qrFields = qr ? QR_FIELDS.filter((f) => qr.parsed[f]) : [];
+      const types = Object.keys(OCR_TARGETS[key]);
+      if (qr && qr.parsed.name && qr.parsed.plate && qr.parsed.expiry) {
+        const parsed = Object.assign({}, qr.parsed, { fromQR: qrFields });
+        ocrState[key] = { parsed, text: 'Mã QR:\n' + qr.text, type: types.includes(parsed.type) ? parsed.type : types[0] };
+        ocrStatus(key, '');
+        renderOcrResult(key);
+        return;
+      }
+      // 2) Đọc chữ trong ảnh (mục nào có trong mã QR thì vẫn lấy theo QR)
+      ocrStatus(key, first ? 'Đang tải bộ đọc chữ (chỉ lần đầu, khoảng 5 MB)…' : 'Đang đọc chữ…');
+      const worker = await getOcrWorker();
+      const canvas = imageToCanvas(img);
       // Đọc 2 lượt rồi gộp: PSM 4 tách đúng cột (giấy biên nhận + bản sao cà vẹt nằm cạnh nhau),
       // PSM 6 đọc được cả dòng bị chữ ký/con dấu đè (vd "Ngày 13 tháng 10 năm 2026")
       // rotateAuto: tự xoay thẳng ảnh chụp nghiêng
@@ -936,13 +1142,19 @@
       let parsed = parseDoc(text, state.today);
       // Tự xoay chỉ sửa được góc nhỏ. Không thấy ngày hết hạn → thử xoay thêm ±10° (ảnh chụp nghiêng nhiều)
       for (const deg of [10, -10]) {
-        if (parsed.expiry) break;
+        if (parsed.expiry || (qr && qr.parsed.expiry)) break;
         pass = 3;
         const c = await worker.recognize(rotateCanvas(canvas, deg), { rotateAuto: true });
         text += '\n' + c.data.text;
         parsed = parseDoc(text, state.today);
       }
-      const types = Object.keys(OCR_TARGETS[key]);
+      if (qr) {
+        qrFields.forEach((f) => { parsed[f] = qr.parsed[f]; });
+        if (qr.parsed.issue) parsed.issueGuess = false;
+        parsed.type = qr.parsed.type;
+        text = 'Mã QR:\n' + qr.text + '\n\nChữ đọc được:\n' + text;
+      }
+      parsed.fromQR = qrFields;
       ocrState[key] = { parsed, text, type: types.includes(parsed.type) ? parsed.type : types[0] };
       ocrStatus(key, '');
       renderOcrResult(key);
@@ -968,19 +1180,21 @@
       // Form sửa khách: không tự ghi đè dữ liệu đang có; bảng gia hạn: ô đang là gợi ý nên ghi đè.
       // Ngày cấp ước tính (không đọc được) thì để người dùng tự chọn.
       const guess = f === 'issue' && st.parsed.issueGuess;
+      const fromQR = (st.parsed.fromQR || []).includes(f);
       const checked = !guess && (key !== 'form' || !cur || cur === val);
-      const label = guess ? `${OCR_LABELS[f]} (ước tính: hạn − ${PAPER_VALID_MONTHS} tháng, không đọc được trên ảnh)` : OCR_LABELS[f];
+      const label = guess ? `${OCR_LABELS[f]} (ước tính: hạn − ${PAPER_VALID_MONTHS} tháng, không đọc được trên ảnh)`
+        : OCR_LABELS[f] + (fromQR ? ' · từ mã QR' : '');
       return `<li><label><input type="checkbox" data-field="${f}" data-target="${id}" ${checked ? 'checked' : ''}>
         <span class="ocr-k">${label}</span><b>${esc(val)}</b>${cur && cur !== val ? `<small>đang là: ${esc(cur)}</small>` : ''}</label></li>`;
     }).join('');
     res.innerHTML = `${seg}
-      ${items.length ? `<p class="ocr-title">Đọc được từ ảnh — chọn mục muốn điền:</p><ul class="ocr-items">${list}</ul>`
+      ${items.length ? `<p class="ocr-title">${items.every(([f]) => (st.parsed.fromQR || []).includes(f)) ? 'Đọc từ mã QR trên giấy' : 'Đọc được từ ảnh'} — chọn mục muốn điền:</p><ul class="ocr-items">${list}</ul>`
         : '<p class="ocr-title">Không nhận ra thông tin nào. Thử chụp lại gần hơn, đủ sáng, giấy phẳng, không bị lóa.</p>'}
       <div class="ocr-btns">
         ${items.length ? '<button type="button" class="btn btn-primary sm" data-ocr-apply>Điền vào form</button>' : ''}
         <button type="button" class="btn btn-ghost sm" data-ocr-cancel>Bỏ qua</button>
       </div>
-      <details class="ocr-raw"><summary>Xem chữ đọc được</summary><pre>${esc(st.text.trim() || '(trống)')}</pre></details>`;
+      <details class="ocr-raw"><summary>Xem nội dung đọc được</summary><pre>${esc(st.text.trim() || '(trống)')}</pre></details>`;
     res.hidden = false;
   }
 
@@ -1020,7 +1234,9 @@
       .concat(eventLines, ['END:VCALENDAR']);
     return lines.map(icsFold).join('\r\n') + '\r\n';
   }
-  function buildCustomerICS(c) {
+  // Mỗi hạn là một sự kiện (VEVENT). File của từng khách và file "Thêm tất cả" dùng chung các dòng này,
+  // nên cùng UID, cùng nội dung, cùng giờ nhắc.
+  function paperEventLines(c) {
     const who = c.plate ? `${c.name} (${c.plate})` : c.name;
     const desc = [
       `Khách: ${c.name}`,
@@ -1029,7 +1245,7 @@
       `Ngày hết hạn: ${fmtDate(c.expiry)}`,
       c.note && `Ghi chú: ${c.note}`,
     ].filter(Boolean).join('\n');
-    return icsWrap([
+    return [
       'BEGIN:VEVENT',
       `UID:${c.id}-${icsDate(c.expiry)}@giay-di-duong`,
       `DTSTAMP:${icsStamp()}`,
@@ -1043,9 +1259,13 @@
       // -16 giờ = 8:00 sáng hôm trước
       'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText('Ngày mai hết hạn giấy đi đường: ' + who)}`, 'TRIGGER:-PT16H', 'END:VALARM',
       'END:VEVENT',
-    ]);
+    ];
   }
-  function buildInsuranceICS(c) {
+  const buildCustomerICS = (c) => icsWrap(paperEventLines(c));
+  const buildInsuranceICS = (c) => icsWrap(insEventLines(c));
+  /** Một file chứa nhiều sự kiện. items: [{ c, kind }] */
+  const buildManyICS = (items) => icsWrap([].concat(...items.map(({ c, kind }) => (kind === 'ins' ? insEventLines(c) : paperEventLines(c)))));
+  function insEventLines(c) {
     const who = c.plate ? `${c.name} (${c.plate})` : c.name;
     const desc = [
       `Khách: ${c.name}`,
@@ -1057,7 +1277,7 @@
       c.note && `Ghi chú: ${c.note}`,
     ].filter(Boolean).join('\n');
     const alarm = (trigger, text) => ['BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(text + who)}`, `TRIGGER:${trigger}`, 'END:VALARM'];
-    return icsWrap([
+    return [
       'BEGIN:VEVENT',
       `UID:${c.id}-bh-${icsDate(c.insExpiry)}@giay-di-duong`,
       `DTSTAMP:${icsStamp()}`,
@@ -1072,7 +1292,7 @@
       alarm('-P6DT16H', 'Còn 7 ngày hết hạn bảo hiểm xe: '),
       alarm('-PT16H', 'Ngày mai hết hạn bảo hiểm xe: '),
       ['END:VEVENT'],
-    ));
+    );
   }
   function buildBackupReminderICS() {
     // Thứ Sáu gần nhất (kể cả hôm nay) lúc 17:00 giờ VN = 10:00 UTC, lặp lại hằng tuần
@@ -1127,9 +1347,17 @@
     $('#cal-ins-date').textContent = c.insExpiry ? fmtDate(c.insExpiry) : '';
     $('#cal-paper').hidden = which === 'ins';
     $('#cal-ins').hidden = which === 'paper' || !c.insExpiry;
+    renderCalDone();
     const canShare = !!shareableFile(new Blob(['x'], { type: 'text/calendar' }), 'test.ics');
     $$('.cal-share').forEach((b) => { b.hidden = !canShare; });
     openSheet('#sheet-cal');
+  }
+  /** Dòng "Đã tạo nhắc cho hạn này" trong bảng Lịch của từng khách. */
+  function renderCalDone() {
+    const c = byId(calCustomerId);
+    if (!c) return;
+    $('#cal-paper-done').hidden = !hasCalFor(c, 'paper', c.expiry);
+    $('#cal-ins-done').hidden = !hasCalFor(c, 'ins', c.insExpiry);
   }
   function calFile(kind) {
     const c = byId(calCustomerId);
@@ -1147,6 +1375,100 @@
     };
   }
 
+  /* ---------- Thêm tất cả vào Lịch: một file .ics cho mọi hạn còn tới của khách đang theo dõi ---------- */
+  function calAllItems(onlyMissing) {
+    const items = [];
+    activeCustomers().forEach((c) => ['paper', 'ins'].forEach((kind) => {
+      const due = dueOf(c, kind);
+      if (due && due >= state.today && (!onlyMissing || c[CAL_FIELD[kind]] !== due)) items.push({ c, kind });
+    }));
+    return items;
+  }
+  const countText = (items) => `${new Set(items.map((i) => i.c.id)).size} khách · ${items.length} sự kiện`;
+  function renderCalAll() {
+    const missing = calAllItems(true), all = calAllItems(false);
+    $('#ca-n-missing').textContent = countText(missing);
+    $('#ca-n-all').textContent = countText(all);
+    const items = $('#ca-missing').checked ? missing : all;
+    $('#ca-download').disabled = !items.length;
+    $('#ca-share').disabled = !items.length;
+    $('#ca-empty').hidden = !!items.length;
+    $('#ca-empty').textContent = all.length ? 'Khách nào cũng đã có nhắc cho hạn hiện tại.' : 'Không có hạn nào từ hôm nay trở đi.';
+    $('#ca-mark').hidden = !missing.length;
+    $('#ca-mark').textContent = `Đã thêm vào Lịch từ trước? Đánh dấu ${countText(missing)} là đã có nhắc`;
+  }
+  function openCalAll() {
+    $('#ca-missing').checked = true;
+    renderCalAll();
+    const canShare = !!shareableFile(new Blob(['x'], { type: 'text/calendar' }), 'test.ics');
+    $('#ca-share').hidden = !canShare;
+    openSheet('#sheet-cal-all');
+  }
+  function calAllFile() {
+    const items = calAllItems($('#ca-missing').checked);
+    if (!items.length) return null;
+    return { items, blob: new Blob([buildManyICS(items)], { type: 'text/calendar;charset=utf-8' }), name: `nhac-lich-tat-ca-${state.today}.ics` };
+  }
+  async function afterCalAll(items) {
+    await markCalendar(items);
+    renderCalAll();
+    toast(`Đã tạo file Lịch gồm ${items.length} sự kiện. Mở file để thêm vào Lịch.`);
+  }
+
+  /* ---------- Hạn thay đổi → nhắc xóa sự kiện hạn cũ, mời thêm nhắc hạn mới ----------
+     Web app không xóa được sự kiện trong Lịch iPhone, nên chỉ nhắc người dùng tự xóa.
+     old: bản ghi trước khi sửa (null nếu khách mới); changes: [{ kind, oldDate, newDate }] */
+  const staleText = (name, kind, date, isOld) =>
+    `Trong Lịch còn nhắc hạn${isOld ? ' cũ' : ''} ngày ${fmtDate(date)} của ${name}${kind === 'ins' ? ' (bảo hiểm)' : ''}. Mở app Lịch, vào ngày đó và xóa sự kiện.`;
+  async function afterDueChange(old, c, changes) {
+    const stale = old ? changes.filter((ch) => ch.oldDate && hasCalFor(old, ch.kind, ch.oldDate)) : [];
+    const fresh = changes.filter((ch) => ch.newDate && ch.newDate >= state.today).map((ch) => ch.kind);
+    const which = fresh.length === 2 ? 'both' : fresh[0];
+    let add;
+    if (stale.length) {
+      add = await ask('Xóa nhắc hạn cũ trong Lịch', stale.map((ch) => staleText(c.name, ch.kind, ch.oldDate, true)).join('\n\n'),
+        fresh.length ? [{ label: 'Thêm nhắc hạn mới vào Lịch', value: true, style: 'btn-primary' }, { label: 'Để sau', value: false }]
+          : [{ label: 'Đã hiểu', value: false, style: 'btn-primary' }]);
+    } else if (fresh.length) {
+      const lines = fresh.map((k) => `${k === 'ins' ? 'Hết hạn bảo hiểm' : 'Hết hạn giấy đi đường'}: ${fmtDate(dueOf(c, k))}`);
+      add = await ask('Thêm nhắc vào Lịch?', [c.name].concat(lines).join('\n'),
+        [{ label: 'Thêm vào Lịch', value: true, style: 'btn-primary' }, { label: 'Để sau', value: false }]);
+    }
+    if (add) openCal(byId(c.id), which);
+  }
+
+  /* ---------- Khách đã tất toán ---------- */
+  async function setSettled(id, date) {
+    const c = byId(id);
+    if (!c) return null;
+    const updated = Object.assign({}, c, { settledAt: date, updatedAt: new Date().toISOString() });
+    try { await DB.put(updated); } catch (e) { toast('Không lưu được: ' + e.message); return null; }
+    state.customers = state.customers.map((x) => (x.id === id ? updated : x));
+    render();
+    return updated;
+  }
+  async function settleCurrent() {
+    const c = byId(editingId);
+    if (!c) return;
+    const yes = await ask('Đánh dấu đã tất toán?', `${c.name}${c.plate ? ' — ' + c.plate : ''}\nKhách sẽ chuyển xuống mục “Đã tất toán”: không còn đếm, không tô màu, không nhắc Lịch. Lịch sử gia hạn được giữ nguyên.`, [
+      { label: 'Đã tất toán', value: true, style: 'btn-primary' },
+      { label: 'Hủy', value: false },
+    ]);
+    if (!yes) return;
+    if (!(await setSettled(c.id, state.today))) return;
+    closeSheet();
+    // Hạn hiện tại đã có nhắc trong Lịch → nhắc tự xóa
+    const stale = ['paper', 'ins'].filter((k) => dueOf(c, k) >= state.today && hasCalFor(c, k, dueOf(c, k)));
+    if (stale.length) {
+      await ask('Xóa nhắc trong Lịch', stale.map((k) => staleText(c.name, k, dueOf(c, k), false)).join('\n\n'), [{ label: 'Đã hiểu', value: 0, style: 'btn-primary' }]);
+    }
+    toast(`Đã chuyển ${c.name} sang “Đã tất toán”`, { label: 'Hoàn tác', fn: () => setSettled(c.id, '') });
+  }
+  async function unsettle(id) {
+    const c = await setSettled(id, '');
+    if (c) toast(`Đang theo dõi lại ${c.name}`);
+  }
+
   /* ---------- Sao lưu (xuất) & khôi phục (nhập) ---------- */
   async function markBackedUp() {
     state.lastBackupAt = new Date().toISOString();
@@ -1160,7 +1482,9 @@
     if (!state.customers.length) { toast('Chưa có dữ liệu để sao lưu'); return; }
     const data = {
       app: 'giay-di-duong',
-      version: 2, // v2: thêm insCompany, insNumber, insExpiry, insHistory (bảo hiểm)
+      // v2: thêm insCompany, insNumber, insExpiry, insHistory (bảo hiểm)
+      // v3: thêm calendarAddedFor, insCalendarAddedFor (đã tạo nhắc Lịch cho hạn nào), settledAt (ngày tất toán)
+      version: 3,
       exportedAt: new Date().toISOString(),
       count: state.customers.length,
       customers: state.customers,
@@ -1225,6 +1549,10 @@
       insNumber: String(raw.insNumber || '').trim(),
       insExpiry: isValidISO(raw.insExpiry) ? raw.insExpiry : '',
       insHistory,
+      // Bản 1.4: hạn nào đã tạo nhắc Lịch, ngày tất toán (file sao lưu cũ không có → để trống)
+      calendarAddedFor: isValidISO(raw.calendarAddedFor) ? raw.calendarAddedFor : '',
+      insCalendarAddedFor: isValidISO(raw.insCalendarAddedFor) ? raw.insCalendarAddedFor : '',
+      settledAt: isValidISO(raw.settledAt) ? raw.settledAt : '',
       createdAt: String(raw.createdAt || now),
       updatedAt: String(raw.updatedAt || now),
     };
@@ -1299,22 +1627,38 @@
     $('#btn-clear-filter').addEventListener('click', () => { state.kind = 'all'; state.filter = null; state.query = ''; $('#q').value = ''; render(); });
     $('#q').addEventListener('input', (e) => { state.query = e.target.value.trim(); render(); });
 
-    $('#list').addEventListener('click', (e) => {
+    const onCardClick = (e) => {
       const btn = e.target.closest('[data-act]');
       const li = e.target.closest('li[data-id]');
       if (!btn || !li) return;
       const c = byId(li.dataset.id);
       if (!c) return;
-      if (btn.dataset.act === 'edit') openForm(c);
-      else if (btn.dataset.act === 'renew') openRenew(c);
-      else if (btn.dataset.act === 'renew-ins') openInsRenew(c);
-      else if (btn.dataset.act === 'cal') openCal(c, state.kind === 'all' ? 'both' : state.kind);
-    });
+      const act = btn.dataset.act;
+      if (act === 'edit') openForm(c);
+      else if (act === 'renew') openRenew(c);
+      else if (act === 'renew-ins') openInsRenew(c);
+      else if (act === 'cal') openCal(c, state.kind === 'all' ? 'both' : state.kind);
+      else if (act === 'unsettle') unsettle(c.id);
+      else if (act === 'mark-cal') {
+        // Tự đánh dấu "Đã có nhắc" (vd. khách đã thêm vào Lịch từ bản cũ, app không biết)
+        const kinds = btn.dataset.kinds.split(',');
+        const prev = { calendarAddedFor: c.calendarAddedFor || '', insCalendarAddedFor: c.insCalendarAddedFor || '' };
+        markCalendar(kinds.map((kind) => ({ c, kind }))).then(() => toast('Đã đánh dấu có nhắc Lịch', {
+          label: 'Hoàn tác',
+          fn: async () => { await saveCustomers([Object.assign({}, byId(c.id), prev)]); render(); },
+        }));
+      }
+    };
+    $('#list').addEventListener('click', onCardClick);
+    $('#settled-list').addEventListener('click', onCardClick);
+    $('#settled').addEventListener('toggle', () => { state.settledOpen = $('#settled').open; });
     $('#empty').addEventListener('click', (e) => { if (e.target.closest('[data-act="add-first"]')) openForm(null); });
 
     // Form khách
     $('#form').addEventListener('submit', saveForm);
     $('#btn-delete').addEventListener('click', deleteCurrent);
+    $('#btn-settle').addEventListener('click', settleCurrent);
+    $('#btn-unsettle').addEventListener('click', async () => { const id = editingId; closeSheet(); await unsettle(id); });
     ['f-name', 'f-plate', 'f-issue', 'f-expiry', 'f-ins-company', 'f-ins-expiry'].forEach((id) => $('#' + id).addEventListener('input', () => clearErr(id)));
     $('#f-plate').addEventListener('blur', (e) => { e.target.value = e.target.value.toUpperCase(); });
     $('#f-issue').addEventListener('input', () => {
@@ -1360,19 +1704,51 @@
     $('#chip-i-today').addEventListener('click', () => { setDate('i-expiry', addYears(state.today, INS_RENEW_YEARS)); clearErr('i-expiry'); });
 
     // Lịch
+    // Bấm tạo file .ics → ghi nhận hạn này đã có nhắc
+    const markOne = async (kind) => { const c = byId(calCustomerId); if (c) { await markCalendar([{ c, kind }]); renderCalDone(); } };
     $$('[data-cal]').forEach((b) => b.addEventListener('click', () => {
       const f = calFile(b.dataset.cal);
-      if (f) downloadBlob(f.blob, f.name);
+      if (!f) return;
+      downloadBlob(f.blob, f.name);
+      markOne(b.dataset.cal);
     }));
     $$('[data-cal-share]').forEach((b) => b.addEventListener('click', async () => {
       const kind = b.dataset.calShare;
       const f = calFile(kind);
       if (!f) return;
       const file = shareableFile(f.blob, f.name);
-      if (!file) { downloadBlob(f.blob, f.name); return; }
+      if (!file) { downloadBlob(f.blob, f.name); markOne(kind); return; }
       const title = kind === 'ins' ? 'Lịch hết hạn bảo hiểm xe' : 'Lịch hết hạn giấy đi đường';
-      try { await navigator.share({ files: [file], title }); } catch (e) { /* hủy */ }
+      try { await navigator.share({ files: [file], title }); markOne(kind); } catch (e) { /* hủy */ }
     }));
+
+    // Thêm tất cả vào Lịch
+    $('#m-cal-all').addEventListener('click', openCalAll);
+    $$('input[name="ca-mode"]').forEach((r) => r.addEventListener('change', renderCalAll));
+    $('#ca-download').addEventListener('click', () => {
+      const f = calAllFile();
+      if (!f) return;
+      downloadBlob(f.blob, f.name);
+      afterCalAll(f.items);
+    });
+    $('#ca-share').addEventListener('click', async () => {
+      const f = calAllFile();
+      if (!f) return;
+      const file = shareableFile(f.blob, f.name);
+      if (!file) { downloadBlob(f.blob, f.name); afterCalAll(f.items); return; }
+      try { await navigator.share({ files: [file], title: 'Lịch hết hạn — tất cả khách' }); afterCalAll(f.items); } catch (e) { /* hủy */ }
+    });
+    $('#ca-mark').addEventListener('click', async () => {
+      const items = calAllItems(true);
+      const yes = await ask('Đánh dấu đã có nhắc?', `${countText(items)} sẽ được coi là đã có nhắc trong Lịch.\nChỉ làm vậy nếu bạn đã thêm các hạn này vào Lịch iPhone từ trước.`, [
+        { label: 'Đánh dấu', value: true, style: 'btn-primary' },
+        { label: 'Hủy', value: false },
+      ]);
+      if (!yes) return;
+      await markCalendar(items);
+      renderCalAll();
+      toast('Đã đánh dấu có nhắc Lịch');
+    });
 
     // Sao lưu
     $('#m-export').addEventListener('click', exportData);
@@ -1431,7 +1807,7 @@
   }
 
   // Cho phép kiểm thử từ bên ngoài (không ảnh hưởng người dùng)
-  window.__gdd = { parseVNDate, statusOf, insStatusOf, buildCustomerICS, buildInsuranceICS, buildBackupReminderICS, cleanCustomer, parseDoc, todayISO, addDays, addYears, diffDays, matches };
+  window.__gdd = { parseVNDate, statusOf, insStatusOf, buildCustomerICS, buildInsuranceICS, buildBackupReminderICS, buildManyICS, calAllItems, needsCal, cleanCustomer, parseDoc, todayISO, addDays, addYears, diffDays, matches };
 
   start();
 })();

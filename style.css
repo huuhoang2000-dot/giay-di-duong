@@ -305,6 +305,48 @@ input, textarea { font: inherit; font-size: 17px; color: var(--text); } /* >=16p
 .history ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 14.5px; }
 .history .h-note { color: var(--muted); font-size: 13.5px; }
 
+/* ===== Nhắc Lịch ===== */
+.cal-missing {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  margin: 0 12px 8px; padding: 5px 6px 5px 10px; border-radius: 10px;
+  background: var(--card); border: 1px dashed var(--orange); color: var(--orange-text); font-size: 13.5px; font-weight: 650;
+}
+.cal-missing span { display: inline-flex; align-items: center; gap: 6px; }
+.cal-missing svg { width: 16px; height: 16px; flex: none; }
+.cal-missing .link { font-size: 13.5px; padding: 4px 6px; min-height: 32px; }
+.cal-done { margin: 2px 0 0; font-size: 13.5px; color: var(--brand); font-weight: 650; }
+.ca-intro { margin: 0 0 12px; }
+.ca-options { display: flex; flex-direction: column; gap: 8px; }
+.ca-opt {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+}
+.ca-opt:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+.ca-opt input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--brand); flex: none; }
+.ca-opt span { display: flex; flex-direction: column; gap: 2px; }
+.ca-opt small { color: var(--muted); font-size: 13.5px; }
+.ca-opt .ca-warn { font-size: 12.5px; }
+.ca-mark { display: block; width: 100%; text-align: center; margin-top: 10px; font-size: 14px; }
+button:disabled { opacity: .45; cursor: default; }
+
+/* ===== Khách đã tất toán ===== */
+.settled { margin-top: 18px; }
+.settled > summary {
+  list-style: none; cursor: pointer; padding: 10px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line);
+  font-weight: 700; color: var(--muted); display: flex; align-items: center; gap: 8px;
+}
+.settled > summary::-webkit-details-marker { display: none; }
+.settled > summary::before { content: '▸'; transition: transform .15s ease; }
+.settled[open] > summary::before { transform: rotate(90deg); }
+.settled .list { margin-top: 10px; }
+.card.card-settled { border-left-color: #9aa3a1; background: var(--input-bg); color: var(--muted); }
+.card-settled .name { color: var(--muted); }
+.card-settled .plate { color: var(--muted); border-color: var(--muted); background: transparent; }
+.settled-meta { margin-top: 6px; font-size: 14px; }
+.settled-meta b { color: var(--text); font-weight: 650; }
+.settle-btn { margin-top: 18px; }
+.settle-btn + .btn-danger-ghost { margin-top: 10px; }
+.settled-note { margin: 18px 0 0; }
+
 /* ===== Chụp giấy để tự điền ===== */
 .ocr { margin-bottom: 14px; }
 .ocr-btn { width: 100%; border: 1.5px dashed var(--brand); color: var(--brand); background: var(--brand-soft); }

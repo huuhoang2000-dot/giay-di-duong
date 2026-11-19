@@ -102,6 +102,11 @@
 
   <ul id="list" class="list"></ul>
 
+  <details id="settled" class="settled" hidden>
+    <summary><span>Đã tất toán (<span id="n-settled">0</span>)</span></summary>
+    <ul id="settled-list" class="list"></ul>
+  </details>
+
   <div id="empty" class="empty" hidden></div>
 
   <p class="privacy-note">Dữ liệu chỉ lưu trên điện thoại này, không gửi đi đâu.</p>
@@ -197,6 +202,9 @@
         <h3>Lịch sử gia hạn bảo hiểm</h3>
         <ol id="ins-history-list"></ol>
       </div>
+      <p id="form-settled-note" class="info-box settled-note" hidden></p>
+      <button type="button" id="btn-settle" class="btn btn-ghost wide settle-btn" hidden>Đã tất toán</button>
+      <button type="button" id="btn-unsettle" class="btn btn-primary wide settle-btn" hidden>Theo dõi lại</button>
       <button type="button" id="btn-delete" class="btn btn-danger-ghost wide" hidden>Xóa khách này</button>
     </div>
   </form>
@@ -320,6 +328,7 @@
         <li>Sự kiện cả ngày vào <b id="cal-date"></b></li>
         <li>Nhắc lúc 8:00 sáng: <b>trước 7 ngày</b> và <b>trước 1 ngày</b></li>
       </ul>
+      <p class="cal-done" id="cal-paper-done" hidden>✓ Đã tạo nhắc cho hạn này.</p>
       <button type="button" class="btn btn-primary wide" data-cal="paper">Tạo sự kiện Lịch (.ics)</button>
       <button type="button" class="btn btn-ghost wide cal-share" data-cal-share="paper" hidden>Chia sẻ / Lưu file .ics</button>
     </div>
@@ -329,6 +338,7 @@
         <li>Sự kiện cả ngày vào <b id="cal-ins-date"></b></li>
         <li>Nhắc lúc 8:00 sáng: <b>trước 30 ngày</b>, <b>trước 7 ngày</b> và <b>trước 1 ngày</b></li>
       </ul>
+      <p class="cal-done" id="cal-ins-done" hidden>✓ Đã tạo nhắc cho hạn này.</p>
       <button type="button" class="btn btn-primary wide" data-cal="ins">Tạo sự kiện Lịch bảo hiểm (.ics)</button>
       <button type="button" class="btn btn-ghost wide cal-share" data-cal-share="ins" hidden>Chia sẻ / Lưu file .ics</button>
     </div>
@@ -344,6 +354,31 @@
   </div>
 </section>
 
+<!-- Thêm tất cả vào Lịch -->
+<section id="sheet-cal-all" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="ca-title">
+  <div class="sheet-head">
+    <span class="head-btn"></span>
+    <h2 id="ca-title">Thêm tất cả vào Lịch</h2>
+    <button type="button" class="head-btn strong" data-close>Xong</button>
+  </div>
+  <div class="sheet-body">
+    <p class="hint ca-intro">Tạo <b>một</b> file .ics cho mọi khách đang theo dõi có hạn từ hôm nay trở đi. Mỗi hạn là một sự kiện, nhắc 8:00 sáng giống nút của từng khách (giấy: trước 7 và 1 ngày; bảo hiểm: thêm trước 30 ngày).</p>
+    <div class="ca-options" role="radiogroup" aria-label="Chọn khách">
+      <label class="ca-opt"><input type="radio" name="ca-mode" id="ca-missing" value="missing" checked>
+        <span><b>Chỉ khách chưa có nhắc</b><small id="ca-n-missing"></small></span></label>
+      <label class="ca-opt"><input type="radio" name="ca-mode" id="ca-all" value="all">
+        <span><b>Tất cả khách đang theo dõi</b><small id="ca-n-all"></small><small class="ca-warn">Hạn đã có nhắc sẽ bị trùng trong Lịch.</small></span></label>
+    </div>
+    <p id="ca-empty" class="hint" hidden></p>
+    <button type="button" id="ca-download" class="btn btn-primary wide">Tạo file Lịch (.ics)</button>
+    <button type="button" id="ca-share" class="btn btn-ghost wide" hidden>Chia sẻ / Lưu file .ics</button>
+    <button type="button" id="ca-mark" class="link ca-mark" hidden></button>
+    <div class="howto">
+      <b>Trên iPhone:</b> mở file vừa tạo → <b>Thêm tất cả</b>. Khách tất toán không có trong file.
+    </div>
+  </div>
+</section>
+
 <!-- Menu sao lưu -->
 <section id="sheet-menu" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="menu-title">
   <div class="sheet-head">
@@ -353,6 +388,10 @@
   </div>
   <div class="sheet-body">
     <div class="info-box" id="backup-info"></div>
+    <button type="button" class="menu-item" id="m-cal-all">
+      <span class="mi-title">Thêm tất cả vào Lịch</span>
+      <span class="mi-sub">Một file .ics cho mọi khách đang theo dõi; chọn chỉ khách chưa có nhắc hoặc tất cả</span>
+    </button>
     <button type="button" class="menu-item" id="m-export">
       <span class="mi-title">Sao lưu dữ liệu (xuất file)</span>
       <span class="mi-sub">Lưu file vào Tệp / iCloud Drive, hoặc gửi qua Zalo, Email cho chính bạn</span>
